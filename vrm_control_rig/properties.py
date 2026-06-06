@@ -21,9 +21,9 @@ class VRMControlRigSettings(bpy.types.PropertyGroup):
         description="Show the selected armature bones as wire bones so controllers are easier to see",
         default=True,
     )
-    hide_extra_source_bones: bpy.props.BoolProperty(
-        name="Hide Extra Bones",
-        description="Hide non-humanoid source bones such as hair, skirt, and accessory bones when generating controls",
+    remove_extra_source_bones: bpy.props.BoolProperty(
+        name="Remove Extra Bones",
+        description="Delete non-humanoid source bones such as hair, skirt, and accessory bones when generating controls",
         default=False,
     )
     enable_diagnostics: bpy.props.BoolProperty(

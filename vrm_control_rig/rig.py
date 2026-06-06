@@ -80,7 +80,7 @@ def generate_control_rig(context, armature_object, *, regenerate=False):
     generated = _create_controller_bones(context, armature_object, mapping, scale)
     log_line(context, "Created generated bones: " + ", ".join(generated))
     _assign_collections(armature_object)
-    _configure_source_bone_visibility(armature_object, mapping, settings)
+    _configure_source_bones(context, armature_object, mapping, settings)
     _configure_pose_bones(armature_object, shapes, scale, settings.auto_hide_helpers)
     _align_controls_to_current_pose(context, armature_object, mapping, scale)
     _create_constraints(context, armature_object, mapping, before_matrices)
@@ -354,7 +354,7 @@ def _ensure_bone_collection(armature_data, name):
     return collection
 
 
-def _configure_source_bone_visibility(armature_object, mapping, settings):
+def _configure_source_bones(context, armature_object, mapping, settings):
     if getattr(settings, "source_bones_wireframe", False):
         try:
             armature_object.data.display_type = "WIRE"
@@ -362,19 +362,30 @@ def _configure_source_bone_visibility(armature_object, mapping, settings):
         except (AttributeError, TypeError, ValueError):
             pass
 
-    if getattr(settings, "hide_extra_source_bones", False):
-        controlled_source_bones = set(mapping.values())
-        for chain in _detect_finger_chains(armature_object.data.bones).values():
-            controlled_source_bones.update(chain)
-        for bone in armature_object.data.bones:
-            if bone.name in GENERATED_BONES or bone.name in controlled_source_bones:
-                bone.hide = False
-                _clear_hidden_extra_tag(bone)
-                continue
-            bone.hide = True
-            tag_generated_extra_hidden(bone)
-    else:
-        _restore_extra_source_bones(armature_object)
+    _restore_extra_source_bones(armature_object)
+    if getattr(settings, "remove_extra_source_bones", False):
+        _remove_extra_source_bones(context, armature_object, mapping)
+
+
+def _remove_extra_source_bones(context, armature_object, mapping):
+    controlled_source_bones = set(mapping.values())
+    for chain in _detect_finger_chains(armature_object.data.bones).values():
+        controlled_source_bones.update(chain)
+
+    remove_names = [
+        bone.name
+        for bone in armature_object.data.bones
+        if bone.name not in GENERATED_BONES and bone.name not in controlled_source_bones
+    ]
+    if not remove_names:
+        return
+
+    with ObjectMode(context, armature_object, "EDIT"):
+        edit_bones = armature_object.data.edit_bones
+        for name in remove_names:
+            bone = edit_bones.get(name)
+            if bone:
+                edit_bones.remove(bone)
 
 
 def _restore_extra_source_bones(armature_object):
@@ -418,21 +429,28 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
         if pose_bone:
             if name == "Root_CTRL":
                 pose_bone.custom_shape = shapes["root"]
-                pose_bone.lock_location = (False, False, True)
+                pose_bone.lock_location = (False, True, False)
                 _set_custom_shape_scale(pose_bone, scale * 2.2)
             elif name == "Eyes_CTRL":
                 pose_bone.custom_shape = shapes["eye"]
                 _set_custom_shape_scale(pose_bone, scale * 1.8)
-            elif name.startswith("Hand_IK"):
+            elif name == "Hand_IK.L":
                 pose_bone.custom_shape = shapes["hand"]
                 _set_custom_shape_scale(pose_bone, scale * 0.9)
+                _set_custom_shape_rotation(pose_bone, -90.0, 0.0, 90.0)
+            elif name == "Hand_IK.R":
+                pose_bone.custom_shape = shapes["hand"]
+                _set_custom_shape_scale(pose_bone, scale * 0.9)
+                _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 90.0)
             elif name.startswith("Foot_IK"):
                 pose_bone.custom_shape = shapes["foot"]
-                _set_custom_shape_scale(pose_bone, scale * 0.95)
+                _set_custom_shape_scale(pose_bone, scale * 2.0)
+                _set_custom_shape_translation(pose_bone, 0.0, 0.018 * scale, 0.072 * scale)
+                _set_custom_shape_rotation(pose_bone, 0.0, 0.0, 90.0)
             elif name in FINGER_CONTROLS:
                 pose_bone.custom_shape = shapes["finger"]
                 pose_bone.lock_rotation = (True, True, True)
-                pose_bone.lock_scale = (False, False, False)
+                pose_bone.lock_scale = (True, True, False)
                 _set_custom_shape_scale(pose_bone, scale * 0.55)
             else:
                 pose_bone.custom_shape = shapes["hand"]
@@ -534,6 +552,28 @@ def _set_custom_shape_scale(pose_bone, scale):
         pose_bone.custom_shape_scale_xyz = (scale, scale, scale)
     elif hasattr(pose_bone, "custom_shape_scale"):
         pose_bone.custom_shape_scale = scale
+
+
+def _set_custom_shape_translation(pose_bone, x, y, z):
+    if not hasattr(pose_bone, "custom_shape_translation"):
+        return
+    try:
+        pose_bone.custom_shape_translation = (x, y, z)
+    except (AttributeError, TypeError, ValueError):
+        pass
+
+
+def _set_custom_shape_rotation(pose_bone, x_degrees, y_degrees, z_degrees):
+    if not hasattr(pose_bone, "custom_shape_rotation_euler"):
+        return
+    try:
+        pose_bone.custom_shape_rotation_euler = (
+            math.radians(x_degrees),
+            math.radians(y_degrees),
+            math.radians(z_degrees),
+        )
+    except (AttributeError, TypeError, ValueError):
+        pass
 
 
 def _set_color(pose_bone, palette):
@@ -700,20 +740,20 @@ def _add_finger_drivers(context, armature_object):
 def _add_finger_curl_driver(armature_object, pose_bone, control_name):
     pose_bone.rotation_mode = "XYZ"
     try:
-        fcurve = pose_bone.driver_add("rotation_euler", 0)
+        fcurve = pose_bone.driver_add("rotation_euler", 2)
     except (TypeError, RuntimeError, ValueError):
         return False
 
     driver = fcurve.driver
     driver.type = "SCRIPTED"
-    driver.expression = f"-({FINGER_CURL_DRIVER_TAG}_sx - 1.0) * 1.15"
+    driver.expression = f"-({FINGER_CURL_DRIVER_TAG}_sz - 1.0) * 0.45"
     variable = driver.variables.new()
-    variable.name = FINGER_CURL_DRIVER_TAG + "_sx"
+    variable.name = FINGER_CURL_DRIVER_TAG + "_sz"
     variable.type = "TRANSFORMS"
     target = variable.targets[0]
     target.id = armature_object
     target.bone_target = control_name
-    target.transform_type = "SCALE_X"
+    target.transform_type = "SCALE_Z"
     target.transform_space = "LOCAL_SPACE"
     return True
 

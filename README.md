@@ -48,11 +48,11 @@ Controllers are placed in the `Controls` bone collection. Pole targets and eye t
 
 `Hand_IK.*` and `Foot_IK.*` drive both IK position and wrist/ankle rotation. Rotate these rounded wire controllers directly when posing hands and feet.
 
-`Root_CTRL` uses an X/Y floor circle with arrows and a center box, and its Z translation is locked. `Eyes_CTRL` moves both eye targets together, while `Eye_Target.L/R` can be adjusted individually.
+`Root_CTRL` uses an X/Z floor circle with arrows and a center box, and its Y translation is locked. `Eyes_CTRL` moves both eye targets together, while `Eye_Target.L/R` can be adjusted individually.
 
-Finger curl controls use local X scale to curl that one finger chain. Select an individual `*_Curl.L/R` controller and scale it in pose mode to close the matching finger.
+Finger curl controls use local Z scale to curl that one finger chain. Select an individual `*_Curl.L/R` controller and scale it on Z in pose mode to close the matching finger.
 
-Enable **Source Bones Wire** to make the original armature display as wire bones. Enable **Hide Extra Bones** to hide non-humanoid source bones such as skirt, hair, and accessory bones while generating controls. The addon hides those extra bones instead of deleting them so VRM spring-bone setups remain intact.
+Enable **Source Bones Wire** to make the original armature display as wire bones. Enable **Remove Extra Bones** to delete non-humanoid source bones such as skirt, hair, and accessory bones while generating controls.
 
 After updating from an older addon version, use **Regenerate Control Rig** so the new custom shapes, rotation constraints, and eye controls are created.
 

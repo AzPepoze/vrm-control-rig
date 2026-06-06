@@ -52,7 +52,7 @@ class VRMCONTROLRIG_PT_panel(bpy.types.Panel):
         options.prop(settings, "controller_scale")
         options.prop(settings, "auto_hide_helpers")
         options.prop(settings, "source_bones_wireframe")
-        options.prop(settings, "hide_extra_source_bones")
+        options.prop(settings, "remove_extra_source_bones")
         options.prop(settings, "enable_diagnostics")
         options.prop(settings, "clear_log_on_generate")
 

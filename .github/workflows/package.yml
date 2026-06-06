@@ -1,0 +1,29 @@
+name: Package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Build add-on zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build zip
+        working-directory: src
+        run: zip -r ../vrm-control-rig.zip . -x "*/__pycache__/*" "*.pyc"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vrm-control-rig
+          path: vrm-control-rig.zip

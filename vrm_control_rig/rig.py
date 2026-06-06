@@ -1,6 +1,7 @@
 """Rig generation and deletion."""
 
 import math
+import re
 
 import bpy
 from mathutils import Vector
@@ -13,6 +14,7 @@ from .constants import (
     HELPER_BONES,
     HELPER_COLLECTION,
     EYE_CONSTRAINT_NAME,
+    FINGER_CURL_DRIVER_TAG,
     IK_CONSTRAINT_NAME,
     ROTATION_CONSTRAINT_NAME,
     ROOT_CONSTRAINT_NAME,
@@ -25,6 +27,30 @@ from .utils import ObjectMode, remove_generated_constraints, remove_generated_fc
 
 class RigBuildError(Exception):
     """Raised when the selected armature cannot support the generated rig."""
+
+
+FINGER_CONTROLS = (
+    "Thumb_Curl.L",
+    "Index_Curl.L",
+    "Middle_Curl.L",
+    "Ring_Curl.L",
+    "Little_Curl.L",
+    "Thumb_Curl.R",
+    "Index_Curl.R",
+    "Middle_Curl.R",
+    "Ring_Curl.R",
+    "Little_Curl.R",
+)
+
+FINGER_SPECS = (
+    ("Thumb", "thumb"),
+    ("Index", "index"),
+    ("Middle", "middle"),
+    ("Ring", "ring"),
+    ("Little", "little"),
+)
+
+HIDDEN_EXTRA_BONE_TAG = ADDON_ID + "_hidden_extra_bone"
 
 
 def generate_control_rig(context, armature_object, *, regenerate=False):
@@ -47,13 +73,15 @@ def generate_control_rig(context, armature_object, *, regenerate=False):
         log_line(context, "Existing generated rig found; deleting before regenerate.")
         delete_control_rig(context, armature_object)
 
+    settings = context.scene.vrm_control_rig
     shapes = ensure_shapes(context)
-    scale = context.scene.vrm_control_rig.controller_scale
+    scale = settings.controller_scale
 
     generated = _create_controller_bones(context, armature_object, mapping, scale)
     log_line(context, "Created generated bones: " + ", ".join(generated))
     _assign_collections(armature_object)
-    _configure_pose_bones(armature_object, shapes, scale, context.scene.vrm_control_rig.auto_hide_helpers)
+    _configure_source_bone_visibility(armature_object, mapping, settings)
+    _configure_pose_bones(armature_object, shapes, scale, settings.auto_hide_helpers)
     _align_controls_to_current_pose(context, armature_object, mapping, scale)
     _create_constraints(context, armature_object, mapping, before_matrices)
     context.view_layer.update()
@@ -72,6 +100,7 @@ def delete_control_rig(context, armature_object):
     log_line(context, f"Delete requested for armature: {armature_object.name}")
     remove_generated_constraints(armature_object)
     remove_generated_fcurves(armature_object)
+    _restore_extra_source_bones(armature_object)
 
     with ObjectMode(context, armature_object, "EDIT"):
         edit_bones = armature_object.data.edit_bones
@@ -106,7 +135,16 @@ def _create_controller_bones(context, armature_object, mapping, scale):
             created.append(name)
 
         root = edit_bones.get("Root_CTRL")
-        for name in ("Eyes_CTRL", "Eye_Target.L", "Eye_Target.R", "Hand_IK.L", "Hand_IK.R", "Foot_IK.L", "Foot_IK.R"):
+        for name in (
+            "Eyes_CTRL",
+            "Eye_Target.L",
+            "Eye_Target.R",
+            "Hand_IK.L",
+            "Hand_IK.R",
+            "Foot_IK.L",
+            "Foot_IK.R",
+            *FINGER_CONTROLS,
+        ):
             child = edit_bones.get(name)
             if child and root:
                 child.parent = root
@@ -150,6 +188,7 @@ def _controller_positions(armature_object, mapping, scale):
 
     eye_positions = _eye_controller_positions(bones, mapping, unit)
     positions.update(eye_positions)
+    positions.update(_finger_controller_positions(bones, unit))
     return positions
 
 
@@ -186,11 +225,9 @@ def _pole_position(root, mid, tip, distance):
 
 
 def _eye_controller_positions(bones, mapping, unit):
-    if "eye.L" not in mapping and "eye.R" not in mapping:
-        return {}
-
     head_bone = bones[mapping["head"]]
-    center = (head_bone.head_local + head_bone.tail_local) * 0.5
+    head_center = (head_bone.head_local + head_bone.tail_local) * 0.5
+    center = head_center
     eye_heads = []
     eye_targets = {}
 
@@ -209,10 +246,72 @@ def _eye_controller_positions(bones, mapping, unit):
     if eye_heads:
         center = sum(eye_heads, Vector((0, 0, 0))) / len(eye_heads)
     forward = _average_eye_forward(bones, mapping)
-    eyes_ctrl = center + forward * unit * 3.0
-    positions = {"Eyes_CTRL": _marker(eyes_ctrl, unit)}
+    eyes_ctrl = center + forward * unit * 4.2
+    if not eye_heads:
+        eyes_ctrl = head_center + forward * unit * 4.2
+    positions = {"Eyes_CTRL": _marker(eyes_ctrl, unit * 1.2)}
     positions.update(eye_targets)
     return positions
+
+
+def _finger_controller_positions(bones, unit):
+    positions = {}
+    for control_name, chain in _detect_finger_chains(bones).items():
+        base_bone = bones.get(chain[0])
+        if not base_bone:
+            continue
+        direction = base_bone.tail_local - base_bone.head_local
+        if direction.length < 0.0001:
+            direction = Vector((0, 0, unit))
+        origin = base_bone.head_local + direction.normalized() * unit * 0.35
+        positions[control_name] = _marker(origin, unit * 0.45)
+    return positions
+
+
+def _detect_finger_chains(bones):
+    by_norm = {_norm_name(bone.name): bone.name for bone in bones}
+    chains = {}
+
+    for side in ("L", "R"):
+        side_word = "left" if side == "L" else "right"
+        side_short = "l" if side == "L" else "r"
+        for display_name, finger_name in FINGER_SPECS:
+            chain = []
+            for index, segment_name in enumerate(("proximal", "intermediate", "distal"), start=1):
+                aliases = (
+                    f"{side_word}{finger_name}{segment_name}",
+                    f"{side_word}{finger_name}{index}",
+                    f"{side_short}{finger_name}{segment_name}",
+                    f"{side_short}{finger_name}{index}",
+                    f"j_bip_{side_short}_{finger_name}{index}",
+                    f"j_bip_{side_short}_{finger_name}_{index}",
+                    f"j_bip_{side_short}_{finger_name}{segment_name}",
+                    f"{finger_name}{index}.{side_short}",
+                    f"{finger_name}{segment_name}.{side_short}",
+                )
+                found = _find_normalized_bone(by_norm, aliases)
+                if found:
+                    chain.append(found)
+            if chain:
+                chains[f"{display_name}_Curl.{side}"] = chain
+
+    return chains
+
+
+def _find_normalized_bone(by_norm, aliases):
+    candidates = [_norm_name(alias) for alias in aliases]
+    for candidate in candidates:
+        if candidate in by_norm:
+            return by_norm[candidate]
+    for bone_norm, original_name in by_norm.items():
+        for candidate in candidates:
+            if bone_norm.endswith(candidate):
+                return original_name
+    return None
+
+
+def _norm_name(name):
+    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 def _average_eye_forward(bones, mapping):
@@ -255,6 +354,58 @@ def _ensure_bone_collection(armature_data, name):
     return collection
 
 
+def _configure_source_bone_visibility(armature_object, mapping, settings):
+    if getattr(settings, "source_bones_wireframe", False):
+        try:
+            armature_object.data.display_type = "WIRE"
+            armature_object.show_in_front = True
+        except (AttributeError, TypeError, ValueError):
+            pass
+
+    if getattr(settings, "hide_extra_source_bones", False):
+        controlled_source_bones = set(mapping.values())
+        for chain in _detect_finger_chains(armature_object.data.bones).values():
+            controlled_source_bones.update(chain)
+        for bone in armature_object.data.bones:
+            if bone.name in GENERATED_BONES or bone.name in controlled_source_bones:
+                bone.hide = False
+                _clear_hidden_extra_tag(bone)
+                continue
+            bone.hide = True
+            tag_generated_extra_hidden(bone)
+    else:
+        _restore_extra_source_bones(armature_object)
+
+
+def _restore_extra_source_bones(armature_object):
+    for bone in armature_object.data.bones:
+        if _is_generated_extra_hidden(bone):
+            bone.hide = False
+            _clear_hidden_extra_tag(bone)
+
+
+def tag_generated_extra_hidden(bone):
+    try:
+        bone[HIDDEN_EXTRA_BONE_TAG] = True
+    except TypeError:
+        pass
+
+
+def _is_generated_extra_hidden(bone):
+    try:
+        return bool(bone.get(HIDDEN_EXTRA_BONE_TAG, False))
+    except TypeError:
+        return False
+
+
+def _clear_hidden_extra_tag(bone):
+    try:
+        if HIDDEN_EXTRA_BONE_TAG in bone:
+            del bone[HIDDEN_EXTRA_BONE_TAG]
+    except TypeError:
+        pass
+
+
 def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
     for pose_bone in armature_object.pose.bones:
         if pose_bone.name in GENERATED_BONES:
@@ -267,17 +418,32 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
         if pose_bone:
             if name == "Root_CTRL":
                 pose_bone.custom_shape = shapes["root"]
-                _set_custom_shape_scale(pose_bone, scale * 1.8)
+                pose_bone.lock_location = (False, False, True)
+                _set_custom_shape_scale(pose_bone, scale * 2.2)
             elif name == "Eyes_CTRL":
                 pose_bone.custom_shape = shapes["eye"]
+                _set_custom_shape_scale(pose_bone, scale * 1.8)
+            elif name.startswith("Hand_IK"):
+                pose_bone.custom_shape = shapes["hand"]
+                _set_custom_shape_scale(pose_bone, scale * 0.9)
+            elif name.startswith("Foot_IK"):
+                pose_bone.custom_shape = shapes["foot"]
+                _set_custom_shape_scale(pose_bone, scale * 0.95)
+            elif name in FINGER_CONTROLS:
+                pose_bone.custom_shape = shapes["finger"]
+                pose_bone.lock_rotation = (True, True, True)
+                pose_bone.lock_scale = (False, False, False)
+                _set_custom_shape_scale(pose_bone, scale * 0.55)
             else:
-                pose_bone.custom_shape = shapes["ik"]
+                pose_bone.custom_shape = shapes["hand"]
             _set_color(pose_bone, "THEME09")
 
     for name in HELPER_BONES:
         pose_bone = armature_object.pose.bones.get(name)
         if pose_bone:
             pose_bone.custom_shape = shapes["eye"] if name.startswith("Eye_Target") else shapes["pole"]
+            if name.startswith("Eye_Target"):
+                _set_custom_shape_scale(pose_bone, scale * 1.25)
             _set_color(pose_bone, "THEME11" if name.startswith("Eye_Target") else "THEME04")
             pose_bone.bone.hide = hide_helpers and not name.startswith("Eye_Target")
 
@@ -403,6 +569,7 @@ def _create_constraints(context, armature_object, mapping, before_matrices):
     _add_rotation_constraint(armature_object, mapping["foot.L"], "Foot_IK.L")
     _add_rotation_constraint(armature_object, mapping["foot.R"], "Foot_IK.R")
     _add_eye_constraints(context, armature_object, mapping)
+    _add_finger_drivers(context, armature_object)
     _add_ik_constraint(
         context,
         armature_object,
@@ -509,6 +676,46 @@ def _add_eye_constraints(context, armature_object, mapping):
         log_line(context, f"Added {added} eye tracking constraints.")
     else:
         log_line(context, "No eye bones detected; skipped eye tracking constraints.")
+
+
+def _add_finger_drivers(context, armature_object):
+    added = 0
+    chains = _detect_finger_chains(armature_object.data.bones)
+    for control_name, chain in chains.items():
+        if control_name not in armature_object.pose.bones:
+            continue
+        for bone_name in chain:
+            pose_bone = armature_object.pose.bones.get(bone_name)
+            if not pose_bone:
+                continue
+            if _add_finger_curl_driver(armature_object, pose_bone, control_name):
+                added += 1
+
+    if added:
+        log_line(context, f"Added {added} finger curl scale drivers.")
+    else:
+        log_line(context, "No finger chains detected; skipped finger curl drivers.")
+
+
+def _add_finger_curl_driver(armature_object, pose_bone, control_name):
+    pose_bone.rotation_mode = "XYZ"
+    try:
+        fcurve = pose_bone.driver_add("rotation_euler", 0)
+    except (TypeError, RuntimeError, ValueError):
+        return False
+
+    driver = fcurve.driver
+    driver.type = "SCRIPTED"
+    driver.expression = f"-({FINGER_CURL_DRIVER_TAG}_sx - 1.0) * 1.15"
+    variable = driver.variables.new()
+    variable.name = FINGER_CURL_DRIVER_TAG + "_sx"
+    variable.type = "TRANSFORMS"
+    target = variable.targets[0]
+    target.id = armature_object
+    target.bone_target = control_name
+    target.transform_type = "SCALE_X"
+    target.transform_space = "LOCAL_SPACE"
+    return True
 
 
 def _set_eye_track_axis(constraint, pose_bone):

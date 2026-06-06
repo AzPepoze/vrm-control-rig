@@ -5,6 +5,9 @@ import bpy
 from .constants import (
     ADDON_ID,
     EYE_CONSTRAINT_NAME,
+    FINGER_CURL_CONSTRAINT_NAME,
+    FINGER_CURL_DRIVER_GROUP,
+    FINGER_CURL_DRIVER_TAG,
     GENERATED_BONES,
     IK_CONSTRAINT_NAME,
     ROOT_CONSTRAINT_NAME,
@@ -68,6 +71,7 @@ def remove_generated_constraints(armature_object):
         ROOT_CONSTRAINT_NAME,
         ROTATION_CONSTRAINT_NAME,
         EYE_CONSTRAINT_NAME,
+        FINGER_CURL_CONSTRAINT_NAME,
     }
     for pose_bone in armature_object.pose.bones:
         for constraint in list(pose_bone.constraints):
@@ -77,7 +81,10 @@ def remove_generated_constraints(armature_object):
 
 def remove_generated_fcurves(armature_object):
     animation_data = armature_object.animation_data
-    if not animation_data or not animation_data.action:
+    if not animation_data:
+        return
+    _remove_generated_drivers(animation_data)
+    if not animation_data.action:
         return
     action = animation_data.action
     generated_paths = tuple(f'pose.bones["{name}"]' for name in GENERATED_BONES)
@@ -85,6 +92,16 @@ def remove_generated_fcurves(armature_object):
         for fcurve in list(fcurves):
             if fcurve.data_path.startswith(generated_paths):
                 fcurves.remove(fcurve)
+
+
+def _remove_generated_drivers(animation_data):
+    if not hasattr(animation_data, "drivers"):
+        return
+    for fcurve in list(animation_data.drivers):
+        expression = getattr(fcurve.driver, "expression", "")
+        group_name = fcurve.group.name if fcurve.group else ""
+        if FINGER_CURL_DRIVER_TAG in expression or group_name == FINGER_CURL_DRIVER_GROUP:
+            animation_data.drivers.remove(fcurve)
 
 
 def _action_fcurve_collections(action):

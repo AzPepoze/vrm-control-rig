@@ -15,6 +15,16 @@ GENERATED_BONES = (
     "Hand_IK.R",
     "Foot_IK.L",
     "Foot_IK.R",
+    "Thumb_Curl.L",
+    "Index_Curl.L",
+    "Middle_Curl.L",
+    "Ring_Curl.L",
+    "Little_Curl.L",
+    "Thumb_Curl.R",
+    "Index_Curl.R",
+    "Middle_Curl.R",
+    "Ring_Curl.R",
+    "Little_Curl.R",
     "Elbow_Pole.L",
     "Elbow_Pole.R",
     "Knee_Pole.L",
@@ -28,6 +38,16 @@ CONTROL_BONES = (
     "Hand_IK.R",
     "Foot_IK.L",
     "Foot_IK.R",
+    "Thumb_Curl.L",
+    "Index_Curl.L",
+    "Middle_Curl.L",
+    "Ring_Curl.L",
+    "Little_Curl.L",
+    "Thumb_Curl.R",
+    "Index_Curl.R",
+    "Middle_Curl.R",
+    "Ring_Curl.R",
+    "Little_Curl.R",
 )
 
 HELPER_BONES = (
@@ -43,6 +63,9 @@ IK_CONSTRAINT_NAME = "VRM Control Rig IK"
 ROOT_CONSTRAINT_NAME = "VRM Control Rig Root"
 ROTATION_CONSTRAINT_NAME = "VRM Control Rig Rotation"
 EYE_CONSTRAINT_NAME = "VRM Control Rig Eye Track"
+FINGER_CURL_CONSTRAINT_NAME = "VRM Control Rig Finger Curl"
+FINGER_CURL_DRIVER_GROUP = "VRM Control Rig Finger Curl"
+FINGER_CURL_DRIVER_TAG = "vcr_finger_curl"
 
 HUMANOID_BONES = (
     "hips",

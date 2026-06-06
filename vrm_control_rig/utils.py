@@ -2,7 +2,14 @@
 
 import bpy
 
-from .constants import ADDON_ID, GENERATED_BONES, IK_CONSTRAINT_NAME, ROOT_CONSTRAINT_NAME
+from .constants import (
+    ADDON_ID,
+    EYE_CONSTRAINT_NAME,
+    GENERATED_BONES,
+    IK_CONSTRAINT_NAME,
+    ROOT_CONSTRAINT_NAME,
+    ROTATION_CONSTRAINT_NAME,
+)
 
 
 def active_armature(context):
@@ -49,13 +56,22 @@ def tag_generated(id_block):
 
 
 def is_generated(id_block):
-    return bool(id_block.get(ADDON_ID, False))
+    try:
+        return bool(id_block.get(ADDON_ID, False))
+    except TypeError:
+        return False
 
 
 def remove_generated_constraints(armature_object):
+    generated_names = {
+        IK_CONSTRAINT_NAME,
+        ROOT_CONSTRAINT_NAME,
+        ROTATION_CONSTRAINT_NAME,
+        EYE_CONSTRAINT_NAME,
+    }
     for pose_bone in armature_object.pose.bones:
         for constraint in list(pose_bone.constraints):
-            if constraint.name in {IK_CONSTRAINT_NAME, ROOT_CONSTRAINT_NAME} or constraint.get(ADDON_ID):
+            if constraint.name in generated_names or is_generated(constraint):
                 pose_bone.constraints.remove(constraint)
 
 

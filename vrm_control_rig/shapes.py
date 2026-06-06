@@ -1,5 +1,7 @@
 """Custom shape creation for controller bones."""
 
+import math
+
 import bpy
 from mathutils import Vector
 
@@ -17,9 +19,10 @@ def ensure_shapes(context):
     collection.hide_render = True
 
     return {
-        "root": _ensure_shape(collection, "VCR_Shape_Root", _cube_mesh),
+        "root": _ensure_shape(collection, "VCR_Shape_Root_Arrows", _root_arrows_mesh),
         "ik": _ensure_shape(collection, "VCR_Shape_IK", _octa_mesh),
         "pole": _ensure_shape(collection, "VCR_Shape_Pole", _pyramid_mesh),
+        "eye": _ensure_shape(collection, "VCR_Shape_Eye", _eye_mesh),
     }
 
 
@@ -37,32 +40,36 @@ def _ensure_shape(collection, name, mesh_factory):
     return obj
 
 
-def _cube_mesh(name):
-    size = 0.5
-    verts = [
-        (-size, -size, -size),
-        (size, -size, -size),
-        (size, size, -size),
-        (-size, size, -size),
-        (-size, -size, size),
-        (size, -size, size),
-        (size, size, size),
-        (-size, size, size),
-    ]
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 0),
-        (4, 5),
-        (5, 6),
-        (6, 7),
-        (7, 4),
-        (0, 4),
-        (1, 5),
-        (2, 6),
-        (3, 7),
-    ]
+def _root_arrows_mesh(name):
+    verts = []
+    edges = []
+    radius = 0.75
+    segments = 48
+
+    for index in range(segments):
+        angle = (index / segments) * 6.283185307179586
+        verts.append((math.cos(angle) * radius, math.sin(angle) * radius, 0.0))
+        edges.append((index, (index + 1) % segments))
+
+    def add_line(start, end):
+        start_index = len(verts)
+        verts.extend([start, end])
+        edges.append((start_index, start_index + 1))
+        return start_index + 1
+
+    arrow = 1.15
+    head = 0.18
+    for end, left, right in (
+        ((arrow, 0, 0), (arrow - head, head, 0), (arrow - head, -head, 0)),
+        ((-arrow, 0, 0), (-arrow + head, head, 0), (-arrow + head, -head, 0)),
+        ((0, arrow, 0), (head, arrow - head, 0), (-head, arrow - head, 0)),
+        ((0, -arrow, 0), (head, -arrow + head, 0), (-head, -arrow + head, 0)),
+    ):
+        end_index = add_line((0, 0, 0), end)
+        left_index = len(verts)
+        verts.extend([left, end, right])
+        edges.extend([(left_index, end_index), (end_index, left_index + 2)])
+
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, edges, [])
     mesh.update()
@@ -112,3 +119,21 @@ def _pyramid_mesh(name):
     mesh.update()
     return mesh
 
+
+def _eye_mesh(name):
+    verts = [
+        (-0.65, 0, 0),
+        (-0.35, 0.25, 0),
+        (0, 0.35, 0),
+        (0.35, 0.25, 0),
+        (0.65, 0, 0),
+        (0.35, -0.25, 0),
+        (0, -0.35, 0),
+        (-0.35, -0.25, 0),
+        (0, 0, 0),
+    ]
+    edges = [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 0), (8, 2), (8, 6)]
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, edges, [])
+    mesh.update()
+    return mesh

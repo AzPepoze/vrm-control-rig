@@ -12,7 +12,9 @@ from .constants import (
     GENERATED_BONES,
     HELPER_BONES,
     HELPER_COLLECTION,
+    EYE_CONSTRAINT_NAME,
     IK_CONSTRAINT_NAME,
+    ROTATION_CONSTRAINT_NAME,
     ROOT_CONSTRAINT_NAME,
 )
 from .detection import detect_humanoid_bones, format_missing_bones
@@ -104,7 +106,7 @@ def _create_controller_bones(context, armature_object, mapping, scale):
             created.append(name)
 
         root = edit_bones.get("Root_CTRL")
-        for name in ("Hand_IK.L", "Hand_IK.R", "Foot_IK.L", "Foot_IK.R"):
+        for name in ("Eyes_CTRL", "Eye_Target.L", "Eye_Target.R", "Hand_IK.L", "Hand_IK.R", "Foot_IK.L", "Foot_IK.R"):
             child = edit_bones.get(name)
             if child and root:
                 child.parent = root
@@ -134,8 +136,7 @@ def _controller_positions(armature_object, mapping, scale):
     right_foot = head("foot.R")
 
     root_placement = _matching_or_vertical(head("hips"), tail("hips"), unit * 1.8)
-
-    return {
+    positions = {
         "Root_CTRL": root_placement,
         "Hand_IK.L": _marker(left_hand, unit),
         "Hand_IK.R": _marker(right_hand, unit),
@@ -146,6 +147,10 @@ def _controller_positions(armature_object, mapping, scale):
         "Knee_Pole.L": _pole_placement(head("upper_leg.L"), head("lower_leg.L"), head("foot.L"), unit, scale),
         "Knee_Pole.R": _pole_placement(head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale),
     }
+
+    eye_positions = _eye_controller_positions(bones, mapping, unit)
+    positions.update(eye_positions)
+    return positions
 
 
 def _vertical(center, length):
@@ -178,6 +183,53 @@ def _pole_position(root, mid, tip, distance):
     if bend.length < 0.0001:
         bend = Vector((0, -1, 0))
     return mid + bend.normalized() * distance
+
+
+def _eye_controller_positions(bones, mapping, unit):
+    if "eye.L" not in mapping and "eye.R" not in mapping:
+        return {}
+
+    head_bone = bones[mapping["head"]]
+    center = (head_bone.head_local + head_bone.tail_local) * 0.5
+    eye_heads = []
+    eye_targets = {}
+
+    for side in ("L", "R"):
+        key = f"eye.{side}"
+        if key not in mapping:
+            continue
+        eye = bones[mapping[key]]
+        direction = eye.tail_local - eye.head_local
+        if direction.length < 0.0001:
+            direction = Vector((0, -1, 0))
+        target = eye.head_local + direction.normalized() * unit * 3.0
+        eye_heads.append(eye.head_local.copy())
+        eye_targets[f"Eye_Target.{side}"] = _marker(target, unit * 0.6)
+
+    if eye_heads:
+        center = sum(eye_heads, Vector((0, 0, 0))) / len(eye_heads)
+    forward = _average_eye_forward(bones, mapping)
+    eyes_ctrl = center + forward * unit * 3.0
+    positions = {"Eyes_CTRL": _marker(eyes_ctrl, unit)}
+    positions.update(eye_targets)
+    return positions
+
+
+def _average_eye_forward(bones, mapping):
+    directions = []
+    for side in ("L", "R"):
+        key = f"eye.{side}"
+        if key in mapping:
+            eye = bones[mapping[key]]
+            direction = eye.tail_local - eye.head_local
+            if direction.length > 0.0001:
+                directions.append(direction.normalized())
+    if not directions:
+        return Vector((0, -1, 0))
+    forward = sum(directions, Vector((0, 0, 0)))
+    if forward.length < 0.0001:
+        return Vector((0, -1, 0))
+    return forward.normalized()
 
 
 def _assign_collections(armature_object):
@@ -213,15 +265,21 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
     for name in CONTROL_BONES:
         pose_bone = armature_object.pose.bones.get(name)
         if pose_bone:
-            pose_bone.custom_shape = shapes["root"] if name == "Root_CTRL" else shapes["ik"]
+            if name == "Root_CTRL":
+                pose_bone.custom_shape = shapes["root"]
+                _set_custom_shape_scale(pose_bone, scale * 1.8)
+            elif name == "Eyes_CTRL":
+                pose_bone.custom_shape = shapes["eye"]
+            else:
+                pose_bone.custom_shape = shapes["ik"]
             _set_color(pose_bone, "THEME09")
 
     for name in HELPER_BONES:
         pose_bone = armature_object.pose.bones.get(name)
         if pose_bone:
-            pose_bone.custom_shape = shapes["pole"]
-            _set_color(pose_bone, "THEME04")
-            pose_bone.bone.hide = hide_helpers
+            pose_bone.custom_shape = shapes["eye"] if name.startswith("Eye_Target") else shapes["pole"]
+            _set_color(pose_bone, "THEME11" if name.startswith("Eye_Target") else "THEME04")
+            pose_bone.bone.hide = hide_helpers and not name.startswith("Eye_Target")
 
 
 def _align_controls_to_current_pose(context, armature_object, mapping, scale):
@@ -245,10 +303,29 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
         target = armature_object.pose.bones.get(target_name)
         source = armature_object.pose.bones.get(mapping[source_key])
         if target and source:
-            _set_pose_head_location(target, source.head)
-            log_line(context, f"  {target_name} head aligned to {source.name} pose head.")
+            _set_pose_from_source(target, source, source.head)
+            log_line(context, f"  {target_name} aligned to {source.name} pose head and rotation.")
 
     unit = _pose_unit(armature_object, mapping, scale)
+    eyes = armature_object.pose.bones.get("Eyes_CTRL")
+    if eyes:
+        target_positions = []
+        for target_name, source_key in (("Eye_Target.L", "eye.L"), ("Eye_Target.R", "eye.R")):
+            target = armature_object.pose.bones.get(target_name)
+            source = armature_object.pose.bones.get(mapping.get(source_key, ""))
+            if target and source:
+                direction = source.tail - source.head
+                if direction.length < 0.0001:
+                    direction = Vector((0, -1, 0))
+                target_location = source.head + direction.normalized() * unit * 3.0
+                _set_pose_head_location(target, target_location)
+                target_positions.append(target_location)
+                log_line(context, f"  {target_name} aligned in front of {source.name}.")
+        if target_positions:
+            average = sum(target_positions, Vector((0, 0, 0))) / len(target_positions)
+            _set_pose_head_location(eyes, average)
+            log_line(context, "  Eyes_CTRL aligned to the average eye target position.")
+
     for target_name, keys in (
         ("Elbow_Pole.L", ("upper_arm.L", "lower_arm.L", "hand.L")),
         ("Elbow_Pole.R", ("upper_arm.R", "lower_arm.R", "hand.R")),
@@ -271,6 +348,12 @@ def _set_pose_head_location(pose_bone, head_location):
     matrix = pose_bone.matrix.copy()
     matrix.translation = head_location
     pose_bone.matrix = matrix
+
+
+def _set_pose_from_source(target_bone, source_bone, head_location):
+    matrix = source_bone.matrix.copy()
+    matrix.translation = head_location
+    target_bone.matrix = matrix
 
 
 def _pose_unit(armature_object, mapping, scale):
@@ -315,6 +398,11 @@ def _create_constraints(context, armature_object, mapping, before_matrices):
         (mapping["upper_arm.R"], mapping["lower_arm.R"], mapping["hand.R"]),
         before_matrices,
     )
+    _add_rotation_constraint(armature_object, mapping["hand.L"], "Hand_IK.L")
+    _add_rotation_constraint(armature_object, mapping["hand.R"], "Hand_IK.R")
+    _add_rotation_constraint(armature_object, mapping["foot.L"], "Foot_IK.L")
+    _add_rotation_constraint(armature_object, mapping["foot.R"], "Foot_IK.R")
+    _add_eye_constraints(context, armature_object, mapping)
     _add_ik_constraint(
         context,
         armature_object,
@@ -343,6 +431,8 @@ def _tracked_source_bones(mapping):
         "upper_chest",
         "neck",
         "head",
+        "eye.L",
+        "eye.R",
         "upper_arm.L",
         "lower_arm.L",
         "hand.L",
@@ -382,6 +472,53 @@ def _add_ik_constraint(context, armature_object, bone_name, target_bone, pole_bo
     constraint.use_rotation = False
     tag_generated(constraint)
     _calibrate_pole_angle(context, armature_object, constraint, pole_bone, affected_bones, before_matrices)
+
+
+def _add_rotation_constraint(armature_object, bone_name, target_bone):
+    pose_bone = armature_object.pose.bones.get(bone_name)
+    if not pose_bone:
+        return
+    constraint = pose_bone.constraints.new(type="COPY_ROTATION")
+    constraint.name = ROTATION_CONSTRAINT_NAME
+    constraint.target = armature_object
+    constraint.subtarget = target_bone
+    constraint.target_space = "POSE"
+    constraint.owner_space = "POSE"
+    tag_generated(constraint)
+
+
+def _add_eye_constraints(context, armature_object, mapping):
+    added = 0
+    for side in ("L", "R"):
+        source_key = f"eye.{side}"
+        target_bone = f"Eye_Target.{side}"
+        if source_key not in mapping or target_bone not in armature_object.pose.bones:
+            continue
+        pose_bone = armature_object.pose.bones.get(mapping[source_key])
+        if not pose_bone:
+            continue
+        constraint = pose_bone.constraints.new(type="DAMPED_TRACK")
+        constraint.name = EYE_CONSTRAINT_NAME
+        constraint.target = armature_object
+        constraint.subtarget = target_bone
+        _set_eye_track_axis(constraint, pose_bone)
+        tag_generated(constraint)
+        added += 1
+
+    if added:
+        log_line(context, f"Added {added} eye tracking constraints.")
+    else:
+        log_line(context, "No eye bones detected; skipped eye tracking constraints.")
+
+
+def _set_eye_track_axis(constraint, pose_bone):
+    direction = pose_bone.bone.tail_local - pose_bone.bone.head_local
+    axis_values = {
+        "TRACK_X": abs(direction.x),
+        "TRACK_Y": abs(direction.y),
+        "TRACK_Z": abs(direction.z),
+    }
+    constraint.track_axis = max(axis_values, key=axis_values.get)
 
 
 def _calibrate_pole_angle(context, armature_object, constraint, pole_bone_name, affected_bones, before_matrices):

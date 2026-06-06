@@ -8,6 +8,9 @@ SHAPE_COLLECTION = "_VRM Control Rig Shapes"
 
 GENERATED_BONES = (
     "Root_CTRL",
+    "Eyes_CTRL",
+    "Eye_Target.L",
+    "Eye_Target.R",
     "Hand_IK.L",
     "Hand_IK.R",
     "Foot_IK.L",
@@ -20,6 +23,7 @@ GENERATED_BONES = (
 
 CONTROL_BONES = (
     "Root_CTRL",
+    "Eyes_CTRL",
     "Hand_IK.L",
     "Hand_IK.R",
     "Foot_IK.L",
@@ -27,6 +31,8 @@ CONTROL_BONES = (
 )
 
 HELPER_BONES = (
+    "Eye_Target.L",
+    "Eye_Target.R",
     "Elbow_Pole.L",
     "Elbow_Pole.R",
     "Knee_Pole.L",
@@ -35,6 +41,8 @@ HELPER_BONES = (
 
 IK_CONSTRAINT_NAME = "VRM Control Rig IK"
 ROOT_CONSTRAINT_NAME = "VRM Control Rig Root"
+ROTATION_CONSTRAINT_NAME = "VRM Control Rig Rotation"
+EYE_CONSTRAINT_NAME = "VRM Control Rig Eye Track"
 
 HUMANOID_BONES = (
     "hips",
@@ -43,6 +51,8 @@ HUMANOID_BONES = (
     "upper_chest",
     "neck",
     "head",
+    "eye.L",
+    "eye.R",
     "upper_arm.L",
     "lower_arm.L",
     "hand.L",
@@ -77,4 +87,3 @@ REQUIRED_BONES = (
     "lower_leg.R",
     "foot.R",
 )
-

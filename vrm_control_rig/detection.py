@@ -22,6 +22,8 @@ ALIASES = {
     "upper_chest": ("upperchest", "upper_chest", "spine3", "j_bip_c_upperchest"),
     "neck": ("neck", "j_bip_c_neck"),
     "head": ("head", "j_bip_c_head"),
+    "eye.L": ("eye.l", "lefteye", "left_eye", "j_bip_l_eye"),
+    "eye.R": ("eye.r", "righteye", "right_eye", "j_bip_r_eye"),
     "upper_arm.L": (
         "upperarm.l",
         "upper_arm.l",
@@ -124,4 +126,3 @@ def _suffix_match(by_norm, candidates):
 
 def format_missing_bones(missing):
     return ", ".join(missing) if missing else ""
-

@@ -36,12 +36,20 @@ Click **Generate Control Rig**.
 The addon creates:
 
 - `Root_CTRL`
+- `Eyes_CTRL`
+- `Eye_Target.L`, `Eye_Target.R` when eye bones are detected
 - `Hand_IK.L`, `Hand_IK.R`
 - `Foot_IK.L`, `Foot_IK.R`
 - `Elbow_Pole.L`, `Elbow_Pole.R`
 - `Knee_Pole.L`, `Knee_Pole.R`
 
-Controllers are placed in the `Controls` bone collection. Pole targets are placed in `Helpers`.
+Controllers are placed in the `Controls` bone collection. Pole targets and eye target bones are placed in `Helpers`.
+
+`Hand_IK.*` and `Foot_IK.*` drive both IK position and wrist/ankle rotation. Rotate these controllers directly when posing hands and feet.
+
+`Root_CTRL` uses a large circle and four-arrow custom shape. `Eyes_CTRL` moves both eye targets together, while `Eye_Target.L/R` can be adjusted individually.
+
+After updating from an older addon version, use **Regenerate Control Rig** so the new custom shapes, rotation constraints, and eye controls are created.
 
 Before export, use **Bake To VRM Skeleton** to bake visual constrained motion onto the original VRM bones. Enable **Delete Controls** in the bake options when exporting to pipelines that reject extra non-deforming bones.
 

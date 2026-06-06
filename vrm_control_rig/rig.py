@@ -436,7 +436,7 @@ def _remove_extra_source_bones(context, armature_object, mapping):
     remove_names = [
         bone.name
         for bone in armature_object.data.bones
-        if bone.name not in GENERATED_BONES and bone.name not in controlled_source_bones
+        if bone.name.startswith("J_Sec") and bone.name not in GENERATED_BONES and bone.name not in controlled_source_bones
     ]
     if not remove_names:
         return
@@ -490,8 +490,8 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
         if pose_bone:
             if name == "Root_CTRL":
                 pose_bone.custom_shape = shapes["root"]
-                pose_bone.lock_location = (False, True, False)
-                _set_custom_shape_scale(pose_bone, scale * 2.2)
+                pose_bone.lock_location = (False, False, False)
+                _set_custom_shape_scale(pose_bone, scale)
                 _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 0.0)
             elif name == "Eyes_CTRL":
                 pose_bone.custom_shape = shapes["eye"]
@@ -615,8 +615,12 @@ def _align_finger_controls_to_current_pose(context, armature_object, unit):
             direction = Vector((0, 0, unit))
 
         target_location = base_bone.head + direction.normalized() * unit * 0.12
-        _set_pose_head_location(target, target_location)
+        target_matrix = base_bone.matrix.copy()
+        target_matrix.translation = target_location
+        target.matrix = target_matrix
         log_line(context, f"  {control_name} aligned near {base_bone.name} and parented to hand IK.")
+
+    context.view_layer.update()
 
 
 def _set_pose_head_location(pose_bone, head_location):

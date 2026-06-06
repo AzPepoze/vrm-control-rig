@@ -36,6 +36,7 @@ Click **Generate Control Rig**.
 The addon creates:
 
 - `Root_CTRL`
+- `Hips_IK`
 - `Eyes_CTRL`
 - `Eye_Target.L`, `Eye_Target.R` when eye bones are detected
 - `Hand_IK.L`, `Hand_IK.R`
@@ -48,7 +49,7 @@ Controllers are placed in the `Controls` bone collection. Pole targets and eye t
 
 `Hand_IK.*` and `Foot_IK.*` drive both IK position and wrist/ankle rotation. Rotate these rounded wire controllers directly when posing hands and feet.
 
-`Root_CTRL` uses an X/Z floor circle with arrows and a center box, and its Y translation is locked. `Eyes_CTRL` moves both eye targets together, while `Eye_Target.L/R` can be adjusted individually.
+`Root_CTRL` uses an X/Z floor circle with arrows and a center box. `Hips_IK` is a box controller for the humanoid hips bone. `Eyes_CTRL` moves both eye targets together, while `Eye_Target.L/R` can be adjusted individually.
 
 Finger curl controls use local Z scale to curl that one finger chain. Select an individual `*_Curl.L/R` controller and scale it on Z in pose mode to close the matching finger.
 

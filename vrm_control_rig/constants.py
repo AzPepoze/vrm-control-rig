@@ -8,6 +8,7 @@ SHAPE_COLLECTION = "_VRM Control Rig Shapes"
 
 GENERATED_BONES = (
     "Root_CTRL",
+    "Hips_IK",
     "Eyes_CTRL",
     "Eye_Target.L",
     "Eye_Target.R",
@@ -33,6 +34,7 @@ GENERATED_BONES = (
 
 CONTROL_BONES = (
     "Root_CTRL",
+    "Hips_IK",
     "Eyes_CTRL",
     "Hand_IK.L",
     "Hand_IK.R",

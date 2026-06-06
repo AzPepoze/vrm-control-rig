@@ -51,6 +51,7 @@ FINGER_SPECS = (
 )
 
 HIDDEN_EXTRA_BONE_TAG = ADDON_ID + "_hidden_extra_bone"
+HIDDEN_EXTRA_OBJECT_TAG = ADDON_ID + "_hidden_extra_object"
 
 
 def generate_control_rig(context, armature_object, *, regenerate=False):
@@ -101,6 +102,7 @@ def delete_control_rig(context, armature_object):
     remove_generated_constraints(armature_object)
     remove_generated_fcurves(armature_object)
     _restore_extra_source_bones(armature_object)
+    _restore_extra_objects()
 
     with ObjectMode(context, armature_object, "EDIT"):
         edit_bones = armature_object.data.edit_bones
@@ -148,9 +150,8 @@ def _create_controller_bones(context, armature_object, mapping, scale):
             "Little_Curl.R": "Hand_IK.R",
         }
         for name in (
+            "Hips_IK",
             "Eyes_CTRL",
-            "Eye_Target.L",
-            "Eye_Target.R",
             "Hand_IK.L",
             "Hand_IK.R",
             "Foot_IK.L",
@@ -163,6 +164,13 @@ def _create_controller_bones(context, armature_object, mapping, scale):
             child = edit_bones.get(name)
             if child and root:
                 child.parent = root
+                child.use_connect = False
+
+        eyes_parent = edit_bones.get("Eyes_CTRL")
+        for name in ("Eye_Target.L", "Eye_Target.R"):
+            child = edit_bones.get(name)
+            if child and eyes_parent:
+                child.parent = eyes_parent
                 child.use_connect = False
 
         for name in FINGER_CONTROLS:
@@ -199,6 +207,7 @@ def _controller_positions(armature_object, mapping, scale):
     root_placement = _root_controller_placement(bones, mapping, unit)
     positions = {
         "Root_CTRL": root_placement,
+        "Hips_IK": _matching_or_vertical(hips, tail("hips"), unit),
         "Hand_IK.L": _matching_or_vertical(left_hand, tail("hand.L"), unit),
         "Hand_IK.R": _matching_or_vertical(right_hand, tail("hand.R"), unit),
         "Foot_IK.L": _marker(left_foot, unit),
@@ -424,8 +433,10 @@ def _configure_source_bones(context, armature_object, mapping, settings):
             pass
 
     _restore_extra_source_bones(armature_object)
+    _restore_extra_objects()
     if getattr(settings, "remove_extra_source_bones", False):
         _remove_extra_source_bones(context, armature_object, mapping)
+        _hide_extra_objects(context)
 
 
 def _remove_extra_source_bones(context, armature_object, mapping):
@@ -447,6 +458,42 @@ def _remove_extra_source_bones(context, armature_object, mapping):
             bone = edit_bones.get(name)
             if bone:
                 edit_bones.remove(bone)
+
+
+def _hide_extra_objects(context):
+    hidden = 0
+    for obj in context.scene.objects:
+        if "hair" not in _norm_name(obj.name):
+            continue
+        if obj.type == "ARMATURE":
+            continue
+        obj[HIDDEN_EXTRA_OBJECT_TAG] = True
+        obj.hide_viewport = True
+        obj.hide_render = True
+        try:
+            obj.hide_set(True)
+        except (AttributeError, TypeError, RuntimeError):
+            pass
+        hidden += 1
+
+    if hidden:
+        log_line(context, f"Hid {hidden} hair object(s) for Remove Extra Bones.")
+
+
+def _restore_extra_objects():
+    for obj in bpy.data.objects:
+        try:
+            if not obj.get(HIDDEN_EXTRA_OBJECT_TAG, False):
+                continue
+            obj.hide_viewport = False
+            obj.hide_render = False
+            try:
+                obj.hide_set(False)
+            except (AttributeError, TypeError, RuntimeError):
+                pass
+            del obj[HIDDEN_EXTRA_OBJECT_TAG]
+        except TypeError:
+            continue
 
 
 def _restore_extra_source_bones(armature_object):
@@ -493,6 +540,9 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
                 pose_bone.lock_location = (False, False, False)
                 _set_custom_shape_scale(pose_bone, scale)
                 _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 0.0)
+            elif name == "Hips_IK":
+                pose_bone.custom_shape = shapes["box"]
+                _set_custom_shape_scale(pose_bone, scale)
             elif name == "Eyes_CTRL":
                 pose_bone.custom_shape = shapes["eye"]
                 _set_custom_shape_scale(pose_bone, scale * 1.8)
@@ -545,6 +595,7 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
         log_line(context, "  Root_CTRL kept at generated floor/root placement.")
 
     for target_name, source_key in (
+        ("Hips_IK", "hips"),
         ("Hand_IK.L", "hand.L"),
         ("Hand_IK.R", "hand.R"),
         ("Foot_IK.L", "foot.L"),
@@ -563,6 +614,7 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
     eyes = armature_object.pose.bones.get("Eyes_CTRL")
     if eyes:
         target_positions = []
+        target_updates = []
         for target_name, source_key in (("Eye_Target.L", "eye.L"), ("Eye_Target.R", "eye.R")):
             target = armature_object.pose.bones.get(target_name)
             source = armature_object.pose.bones.get(mapping.get(source_key, ""))
@@ -571,13 +623,16 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
                 if direction.length < 0.0001:
                     direction = Vector((0, -1, 0))
                 target_location = source.head + direction.normalized() * unit * 3.0
-                _set_pose_head_location(target, target_location)
                 target_positions.append(target_location)
-                log_line(context, f"  {target_name} aligned in front of {source.name}.")
+                target_updates.append((target, target_location, source.name))
         if target_positions:
             average = sum(target_positions, Vector((0, 0, 0))) / len(target_positions)
             _set_pose_head_location(eyes, average)
             log_line(context, "  Eyes_CTRL aligned to the average eye target position.")
+            context.view_layer.update()
+        for target, target_location, source_name in target_updates:
+            _set_pose_head_location(target, target_location)
+            log_line(context, f"  {target.name} aligned in front of {source_name}.")
 
     for target_name, keys in (
         ("Elbow_Pole.L", ("upper_arm.L", "lower_arm.L", "hand.L")),
@@ -679,7 +734,7 @@ def _set_color(pose_bone, palette):
 
 
 def _create_constraints(context, armature_object, mapping, before_matrices):
-    _add_root_constraint(armature_object, mapping["hips"], "Root_CTRL")
+    _add_root_constraint(armature_object, mapping["hips"], "Hips_IK")
     context.view_layer.update()
     _add_ik_constraint(
         context,

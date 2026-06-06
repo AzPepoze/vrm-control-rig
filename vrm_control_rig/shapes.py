@@ -20,6 +20,7 @@ def ensure_shapes(context):
 
     return {
         "root": _ensure_shape(collection, "VCR_Shape_Root_Floor_Box", _root_floor_box_mesh),
+        "box": _ensure_shape(collection, "VCR_Shape_Box", _box_mesh),
         "hand": _ensure_shape(collection, "VCR_Shape_Hand_D", _rounded_d_mesh),
         "foot": _ensure_shape(collection, "VCR_Shape_Foot_D", _rounded_d_mesh),
         "finger": _ensure_shape(collection, "VCR_Shape_Finger_Curl", _finger_curl_mesh),
@@ -88,6 +89,38 @@ def _root_floor_box_mesh(name):
         left_index = add_polyline([left, right])
         edges.extend([(left_index, end_index), (end_index, left_index + 1)])
 
+    mesh = bpy.data.meshes.new(name)
+    mesh.from_pydata(verts, edges, [])
+    mesh.update()
+    return mesh
+
+
+def _box_mesh(name):
+    half = 0.5
+    verts = [
+        (-half, -half, -half),
+        (half, -half, -half),
+        (half, half, -half),
+        (-half, half, -half),
+        (-half, -half, half),
+        (half, -half, half),
+        (half, half, half),
+        (-half, half, half),
+    ]
+    edges = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 0),
+        (4, 5),
+        (5, 6),
+        (6, 7),
+        (7, 4),
+        (0, 4),
+        (1, 5),
+        (2, 6),
+        (3, 7),
+    ]
     mesh = bpy.data.meshes.new(name)
     mesh.from_pydata(verts, edges, [])
     mesh.update()

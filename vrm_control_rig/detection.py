@@ -22,8 +22,8 @@ ALIASES = {
     "upper_chest": ("upperchest", "upper_chest", "spine3", "j_bip_c_upperchest"),
     "neck": ("neck", "j_bip_c_neck"),
     "head": ("head", "j_bip_c_head"),
-    "eye.L": ("eye.l", "lefteye", "left_eye", "j_bip_l_eye"),
-    "eye.R": ("eye.r", "righteye", "right_eye", "j_bip_r_eye"),
+    "eye.L": ("eye.l", "lefteye", "left_eye", "j_bip_l_eye", "j_adj_l_faceeye", "j_ad_l_faceeye"),
+    "eye.R": ("eye.r", "righteye", "right_eye", "j_bip_r_eye", "j_adj_r_faceeye", "j_ad_r_faceeye"),
     "upper_arm.L": (
         "upperarm.l",
         "upper_arm.l",

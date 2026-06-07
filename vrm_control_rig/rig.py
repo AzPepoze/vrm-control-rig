@@ -269,20 +269,40 @@ def _matching_or_vertical(head, tail, fallback_length):
 
 
 def _pole_placement(root, mid, tip, unit, scale):
-    pole = _pole_position(root, mid, tip, unit * 3.0 * scale)
+    pole, _bend_dir, _is_straight = _pole_position(root, mid, tip, unit * 3.0 * scale)
     return _marker(pole, unit * 0.75)
 
 
 def _pole_position(root, mid, tip, distance):
+    """Return (pole_world_pos, bend_direction, is_straight).
+
+    *bend_direction* is the unit vector from the chain toward the pole.
+    *is_straight* is True when the chain is collinear and a fallback
+    perpendicular was chosen — the IK solver may need a priming nudge.
+    """
     chain = tip - root
     if chain.length < 0.0001:
-        return mid + Vector((0, -distance, 0))
-
-    projection = root + chain.normalized() * (mid - root).dot(chain.normalized())
-    bend = mid - projection
-    if bend.length < 0.0001:
         bend = Vector((0, -1, 0))
-    return mid + bend.normalized() * distance
+        return mid + bend * distance, bend.normalized(), True
+
+    chain_dir = chain.normalized()
+    projection = root + chain_dir * (mid - root).dot(chain_dir)
+    bend = mid - projection
+    is_straight = False
+
+    if bend.length < 0.0001:
+        is_straight = True
+        # Chain is straight — pick a perpendicular direction.
+        # Cross chain with world +Z (up) gives a horizontal pole offset.
+        # If the chain is vertical, cross with world +Y instead.
+        perp = chain_dir.cross(Vector((0, 0, 1)))
+        if perp.length < 0.0001:
+            perp = chain_dir.cross(Vector((0, 1, 0)))
+        if perp.length < 0.0001:
+            perp = Vector((0, -1, 0))
+        bend = perp.normalized()
+
+    return mid + bend.normalized() * distance, bend.normalized(), is_straight
 
 
 def _eye_controller_positions(bones, mapping, unit):
@@ -645,9 +665,34 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
         mid = armature_object.pose.bones.get(mapping[keys[1]])
         tip = armature_object.pose.bones.get(mapping[keys[2]])
         if target and root and mid and tip:
-            pole_position = _pole_position(root.head, mid.head, tip.head, unit * 3.0 * scale)
+            pole_distance = unit * 3.0 * scale
+            pole_position, bend_dir, is_straight = _pole_position(
+                root.head, mid.head, tip.head, pole_distance
+            )
             _set_pose_head_location(target, pole_position)
             log_line(context, f"  {target_name} aligned to current bend plane.")
+
+            if is_straight:
+                # The chain is perfectly straight — the IK solver hits a
+                # singularity and can't determine the bend direction.  Nudge
+                # the IK target slightly toward the pole to prime the solver.
+                ik_target_name = {
+                    "Elbow_Pole.L": "Hand_IK.L",
+                    "Elbow_Pole.R": "Hand_IK.R",
+                    "Knee_Pole.L": "Foot_IK.L",
+                    "Knee_Pole.R": "Foot_IK.R",
+                }.get(target_name)
+                ik_target = armature_object.pose.bones.get(ik_target_name)
+                if ik_target:
+                    nudge = bend_dir * (pole_distance * 0.002)
+                    matrix = ik_target.matrix.copy()
+                    matrix.translation += nudge
+                    ik_target.matrix = matrix
+                    log_line(
+                        context,
+                        f"  {ik_target_name} nudged {nudge.length:.4f} toward "
+                        f"pole to break straight-chain singularity.",
+                    )
 
     context.view_layer.update()
 
@@ -817,17 +862,45 @@ def _add_root_constraint(armature_object, bone_name, target_bone):
     tag_generated(constraint)
 
 
+def _count_chain_to_bone(armature_data, bone_name, root_bone_name):
+    """Count bones from bone_name up the parent chain to root_bone_name (inclusive).
+
+    Returns the number of bones needed for chain_count so the IK chain
+    reaches from *bone_name* upward through *root_bone_name*.  Falls back
+    to 2 when the parent chain doesn't contain *root_bone_name*.
+    """
+    bones = armature_data.bones
+    bone = bones.get(bone_name)
+    target = bones.get(root_bone_name)
+    if not bone or not target:
+        return 2
+    count = 0
+    current = bone
+    while current and count < 100:
+        count += 1
+        if current == target:
+            return count
+        current = current.parent
+    return 2
+
+
 def _add_ik_constraint(context, armature_object, bone_name, target_bone, pole_bone, affected_bones, before_matrices):
     pose_bone = armature_object.pose.bones[bone_name]
+    chain_count = _count_chain_to_bone(armature_object.data, bone_name, affected_bones[0])
     constraint = pose_bone.constraints.new(type="IK")
     constraint.name = IK_CONSTRAINT_NAME
     constraint.target = armature_object
     constraint.subtarget = target_bone
     constraint.pole_target = armature_object
     constraint.pole_subtarget = pole_bone
-    constraint.chain_count = 2
+    constraint.chain_count = chain_count
     constraint.use_rotation = False
     tag_generated(constraint)
+    log_line(
+        context,
+        f"  IK on {bone_name}: chain_count={chain_count} "
+        f"(from {bone_name} up to {affected_bones[0]})",
+    )
     _calibrate_pole_angle(context, armature_object, constraint, pole_bone, affected_bones, before_matrices)
 
 

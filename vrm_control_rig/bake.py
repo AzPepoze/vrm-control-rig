@@ -4,7 +4,7 @@ import bpy
 
 from .constants import GENERATED_BONES
 from .detection import detect_humanoid_bones
-from .utils import ObjectMode, remove_generated_constraints, remove_generated_fcurves
+from .utils import ObjectMode, is_generated, remove_generated_constraints, remove_generated_fcurves
 
 
 def bake_to_vrm_skeleton(context, armature_object, frame_start, frame_end, *, remove_constraints=False):
@@ -42,9 +42,8 @@ def remove_control_animation(armature_object):
     """Remove animation channels for generated bones so exports only carry VRM bones."""
 
     remove_generated_fcurves(armature_object)
-    for name in GENERATED_BONES:
-        pose_bone = armature_object.pose.bones.get(name)
-        if pose_bone:
+    for pose_bone in armature_object.pose.bones:
+        if is_generated(pose_bone):
             pose_bone.matrix_basis.identity()
 
 

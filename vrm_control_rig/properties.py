@@ -60,6 +60,11 @@ class VRMControlRigSettings(bpy.types.PropertyGroup):
         description="Delete generated control bones after baking visual transforms",
         default=False,
     )
+    use_random_names: bpy.props.BoolProperty(
+        name="Random Bone Names",
+        description="Use randomized names for generated bones to prevent external tools (like Godot) from auto-mapping them to humanoid slots",
+        default=False,
+    )
 
 
 CLASSES = (VRMControlRigSettings,)

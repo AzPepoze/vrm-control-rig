@@ -53,6 +53,7 @@ class VRMCONTROLRIG_PT_panel(bpy.types.Panel):
         options.prop(settings, "auto_hide_helpers")
         options.prop(settings, "source_bones_wireframe")
         options.prop(settings, "remove_extra_source_bones")
+        options.prop(settings, "use_random_names")
         options.prop(settings, "enable_diagnostics")
         options.prop(settings, "clear_log_on_generate")
 

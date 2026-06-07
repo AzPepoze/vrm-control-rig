@@ -2,6 +2,7 @@
 
 import math
 import re
+import uuid
 
 import bpy
 from mathutils import Vector
@@ -18,11 +19,44 @@ from .constants import (
     IK_CONSTRAINT_NAME,
     ROTATION_CONSTRAINT_NAME,
     ROOT_CONSTRAINT_NAME,
+    B_ROOT,
+    B_HIPS,
+    B_EYES,
+    B_EYE_TARGET_L,
+    B_EYE_TARGET_R,
+    B_HAND_IK_L,
+    B_HAND_IK_R,
+    B_FOOT_IK_L,
+    B_FOOT_IK_R,
+    B_ELBOW_POLE_L,
+    B_ELBOW_POLE_R,
+    B_KNEE_POLE_L,
+    B_KNEE_POLE_R,
+    B_THUMB_CURL_L,
+    B_INDEX_CURL_L,
+    B_MIDDLE_CURL_L,
+    B_RING_CURL_L,
+    B_LITTLE_CURL_L,
+    B_THUMB_CURL_R,
+    B_INDEX_CURL_R,
+    B_MIDDLE_CURL_R,
+    B_RING_CURL_R,
+    B_LITTLE_CURL_R,
+    P_CTRL,
+    P_IK,
+    P_MCH,
 )
 from .detection import detect_humanoid_bones, format_missing_bones
 from .logs import clear_log, log_delta, log_line, log_mapping, log_snapshot, snapshot_pose
 from .shapes import ensure_shapes
-from .utils import ObjectMode, remove_generated_constraints, remove_generated_fcurves, tag_generated
+from .utils import (
+    ObjectMode,
+    get_generated_bone_names,
+    is_generated,
+    remove_generated_constraints,
+    remove_generated_fcurves,
+    tag_generated,
+)
 
 
 class RigBuildError(Exception):
@@ -30,16 +64,16 @@ class RigBuildError(Exception):
 
 
 FINGER_CONTROLS = (
-    "Thumb_Curl.L",
-    "Index_Curl.L",
-    "Middle_Curl.L",
-    "Ring_Curl.L",
-    "Little_Curl.L",
-    "Thumb_Curl.R",
-    "Index_Curl.R",
-    "Middle_Curl.R",
-    "Ring_Curl.R",
-    "Little_Curl.R",
+    B_THUMB_CURL_L,
+    B_INDEX_CURL_L,
+    B_MIDDLE_CURL_L,
+    B_RING_CURL_L,
+    B_LITTLE_CURL_L,
+    B_THUMB_CURL_R,
+    B_INDEX_CURL_R,
+    B_MIDDLE_CURL_R,
+    B_RING_CURL_R,
+    B_LITTLE_CURL_R,
 )
 
 FINGER_SPECS = (
@@ -77,24 +111,37 @@ def generate_control_rig(context, armature_object, *, regenerate=False):
     settings = context.scene.vrm_control_rig
     shapes = ensure_shapes(context)
     scale = settings.controller_scale
+    bone_names = _get_bone_names(settings)
 
-    generated = _create_controller_bones(context, armature_object, mapping, scale)
+    generated = _create_controller_bones(context, armature_object, mapping, scale, bone_names)
     log_line(context, "Created generated bones: " + ", ".join(generated))
-    _assign_collections(armature_object)
+    _assign_collections(armature_object, bone_names)
     _configure_source_bones(context, armature_object, mapping, settings)
-    _configure_pose_bones(armature_object, shapes, scale, settings.auto_hide_helpers)
-    _align_controls_to_current_pose(context, armature_object, mapping, scale)
-    _create_constraints(context, armature_object, mapping, before_matrices)
+    _configure_pose_bones(armature_object, shapes, scale, settings.auto_hide_helpers, bone_names)
+    _align_controls_to_current_pose(context, armature_object, mapping, scale, bone_names)
+    _create_constraints(context, armature_object, mapping, before_matrices, bone_names)
     context.view_layer.update()
 
     after_source = snapshot_pose(armature_object, tracked_source_bones)
-    after_controls = snapshot_pose(armature_object, GENERATED_BONES)
+    after_controls = snapshot_pose(armature_object, list(bone_names.values()))
     log_snapshot(context, "After generation source bone transforms:", after_source)
     log_snapshot(context, "After generation generated control transforms:", after_controls)
     log_delta(context, "Source bone transform delta after generation:", before, after_source)
 
     armature_object[ADDON_ID] = True
     return generated
+
+
+def _get_bone_names(settings):
+    """Return a mapping of logical bone constants to their actual names."""
+    mapping = {}
+    for name in GENERATED_BONES:
+        if settings.use_random_names:
+            # Use a prefix that Godot is highly unlikely to map to humanoid.
+            mapping[name] = f"vcr_{uuid.uuid4().hex[:8]}"
+        else:
+            mapping[name] = name
+    return mapping
 
 
 def delete_control_rig(context, armature_object):
@@ -104,9 +151,10 @@ def delete_control_rig(context, armature_object):
     _restore_extra_source_bones(armature_object)
     _restore_extra_objects()
 
+    generated_names = get_generated_bone_names(armature_object)
     with ObjectMode(context, armature_object, "EDIT"):
         edit_bones = armature_object.data.edit_bones
-        for name in GENERATED_BONES:
+        for name in generated_names:
             bone = edit_bones.get(name)
             if bone:
                 edit_bones.remove(bone)
@@ -115,11 +163,11 @@ def delete_control_rig(context, armature_object):
 
 
 def has_control_rig(armature_object):
-    return any(name in armature_object.data.bones for name in GENERATED_BONES)
+    return bool(get_generated_bone_names(armature_object))
 
 
-def _create_controller_bones(context, armature_object, mapping, scale):
-    positions = _controller_positions(armature_object, mapping, scale)
+def _create_controller_bones(context, armature_object, mapping, scale, bone_names):
+    positions = _controller_positions(armature_object, mapping, scale, bone_names)
     created = []
 
     with ObjectMode(context, armature_object, "EDIT"):
@@ -136,46 +184,47 @@ def _create_controller_bones(context, armature_object, mapping, scale):
             tag_generated(bone)
             created.append(name)
 
-        root = edit_bones.get("Root_CTRL")
+        root = edit_bones.get(bone_names[B_ROOT])
         hand_parents = {
-            "Thumb_Curl.L": "Hand_IK.L",
-            "Index_Curl.L": "Hand_IK.L",
-            "Middle_Curl.L": "Hand_IK.L",
-            "Ring_Curl.L": "Hand_IK.L",
-            "Little_Curl.L": "Hand_IK.L",
-            "Thumb_Curl.R": "Hand_IK.R",
-            "Index_Curl.R": "Hand_IK.R",
-            "Middle_Curl.R": "Hand_IK.R",
-            "Ring_Curl.R": "Hand_IK.R",
-            "Little_Curl.R": "Hand_IK.R",
+            bone_names[B_THUMB_CURL_L]: bone_names[B_HAND_IK_L],
+            bone_names[B_INDEX_CURL_L]: bone_names[B_HAND_IK_L],
+            bone_names[B_MIDDLE_CURL_L]: bone_names[B_HAND_IK_L],
+            bone_names[B_RING_CURL_L]: bone_names[B_HAND_IK_L],
+            bone_names[B_LITTLE_CURL_L]: bone_names[B_HAND_IK_L],
+            bone_names[B_THUMB_CURL_R]: bone_names[B_HAND_IK_R],
+            bone_names[B_INDEX_CURL_R]: bone_names[B_HAND_IK_R],
+            bone_names[B_MIDDLE_CURL_R]: bone_names[B_HAND_IK_R],
+            bone_names[B_RING_CURL_R]: bone_names[B_HAND_IK_R],
+            bone_names[B_LITTLE_CURL_R]: bone_names[B_HAND_IK_R],
         }
         for name in (
-            "Hips_IK",
-            "Eyes_CTRL",
-            "Hand_IK.L",
-            "Hand_IK.R",
-            "Foot_IK.L",
-            "Foot_IK.R",
-            "Elbow_Pole.L",
-            "Elbow_Pole.R",
-            "Knee_Pole.L",
-            "Knee_Pole.R",
+            bone_names[B_HIPS],
+            bone_names[B_EYES],
+            bone_names[B_HAND_IK_L],
+            bone_names[B_HAND_IK_R],
+            bone_names[B_FOOT_IK_L],
+            bone_names[B_FOOT_IK_R],
+            bone_names[B_ELBOW_POLE_L],
+            bone_names[B_ELBOW_POLE_R],
+            bone_names[B_KNEE_POLE_L],
+            bone_names[B_KNEE_POLE_R],
         ):
             child = edit_bones.get(name)
             if child and root:
                 child.parent = root
                 child.use_connect = False
 
-        eyes_parent = edit_bones.get("Eyes_CTRL")
-        for name in ("Eye_Target.L", "Eye_Target.R"):
+        eyes_parent = edit_bones.get(bone_names[B_EYES])
+        for name in (bone_names[B_EYE_TARGET_L], bone_names[B_EYE_TARGET_R]):
             child = edit_bones.get(name)
             if child and eyes_parent:
                 child.parent = eyes_parent
                 child.use_connect = False
 
         for name in FINGER_CONTROLS:
-            child = edit_bones.get(name)
-            parent_name = hand_parents.get(name)
+            actual_name = bone_names[name]
+            child = edit_bones.get(actual_name)
+            parent_name = hand_parents.get(actual_name)
             parent = edit_bones.get(parent_name) if parent_name else None
             if child and parent:
                 child.parent = parent
@@ -184,7 +233,7 @@ def _create_controller_bones(context, armature_object, mapping, scale):
     return created
 
 
-def _controller_positions(armature_object, mapping, scale):
+def _controller_positions(armature_object, mapping, scale, bone_names):
     data = armature_object.data
     bones = data.bones
 
@@ -206,21 +255,21 @@ def _controller_positions(armature_object, mapping, scale):
 
     root_placement = _root_controller_placement(bones, mapping, unit)
     positions = {
-        "Root_CTRL": root_placement,
-        "Hips_IK": _matching_or_vertical(hips, tail("hips"), unit),
-        "Hand_IK.L": _matching_or_vertical(left_hand, tail("hand.L"), unit),
-        "Hand_IK.R": _matching_or_vertical(right_hand, tail("hand.R"), unit),
-        "Foot_IK.L": _marker(left_foot, unit),
-        "Foot_IK.R": _marker(right_foot, unit),
-        "Elbow_Pole.L": _pole_placement(head("upper_arm.L"), head("lower_arm.L"), head("hand.L"), unit, scale),
-        "Elbow_Pole.R": _pole_placement(head("upper_arm.R"), head("lower_arm.R"), head("hand.R"), unit, scale),
-        "Knee_Pole.L": _pole_placement(head("upper_leg.L"), head("lower_leg.L"), head("foot.L"), unit, scale),
-        "Knee_Pole.R": _pole_placement(head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale),
+        bone_names[B_ROOT]: root_placement,
+        bone_names[B_HIPS]: _matching_or_vertical(hips, tail("hips"), unit),
+        bone_names[B_HAND_IK_L]: _matching_or_vertical(left_hand, tail("hand.L"), unit),
+        bone_names[B_HAND_IK_R]: _matching_or_vertical(right_hand, tail("hand.R"), unit),
+        bone_names[B_FOOT_IK_L]: _marker(left_foot, unit),
+        bone_names[B_FOOT_IK_R]: _marker(right_foot, unit),
+        bone_names[B_ELBOW_POLE_L]: _pole_placement(head("upper_arm.L"), head("lower_arm.L"), head("hand.L"), unit, scale),
+        bone_names[B_ELBOW_POLE_R]: _pole_placement(head("upper_arm.R"), head("lower_arm.R"), head("hand.R"), unit, scale),
+        bone_names[B_KNEE_POLE_L]: _pole_placement(head("upper_leg.L"), head("lower_leg.L"), head("foot.L"), unit, scale),
+        bone_names[B_KNEE_POLE_R]: _pole_placement(head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale),
     }
 
-    eye_positions = _eye_controller_positions(bones, mapping, unit)
+    eye_positions = _eye_controller_positions(bones, mapping, unit, bone_names)
     positions.update(eye_positions)
-    positions.update(_finger_controller_positions(bones, mapping, unit))
+    positions.update(_finger_controller_positions(bones, mapping, unit, bone_names))
     return positions
 
 
@@ -305,7 +354,7 @@ def _pole_position(root, mid, tip, distance):
     return mid + bend.normalized() * distance, bend.normalized(), is_straight
 
 
-def _eye_controller_positions(bones, mapping, unit):
+def _eye_controller_positions(bones, mapping, unit, bone_names):
     head_bone = bones[mapping["head"]]
     head_center = (head_bone.head_local + head_bone.tail_local) * 0.5
     center = head_center
@@ -322,7 +371,9 @@ def _eye_controller_positions(bones, mapping, unit):
             direction = Vector((0, -1, 0))
         target = eye.head_local + direction.normalized() * unit * 3.0
         eye_heads.append(eye.head_local.copy())
-        eye_targets[f"Eye_Target.{side}"] = _marker(target, unit * 0.6)
+        logical_name = B_EYE_TARGET_L if side == "L" else B_EYE_TARGET_R
+        target_name = bone_names[logical_name]
+        eye_targets[target_name] = _marker(target, unit * 0.6)
 
     if eye_heads:
         center = sum(eye_heads, Vector((0, 0, 0))) / len(eye_heads)
@@ -330,18 +381,22 @@ def _eye_controller_positions(bones, mapping, unit):
     eyes_ctrl = center + forward * unit * 4.2
     if not eye_heads:
         eyes_ctrl = head_center + forward * unit * 4.2
-    positions = {"Eyes_CTRL": _marker(eyes_ctrl, unit * 1.2)}
+    positions = {bone_names[B_EYES]: _marker(eyes_ctrl, unit * 1.2)}
     positions.update(eye_targets)
     return positions
 
 
-def _finger_controller_positions(bones, mapping, unit):
+def _finger_controller_positions(bones, mapping, unit, bone_names):
     positions = {}
-    chains = _detect_finger_chains(bones)
+    chains = _detect_finger_chains(bones, bone_names)
     for side in ("L", "R"):
         for control_name, chain in chains.items():
             if not control_name.endswith(f".{side}"):
-                continue
+                # If using random names, they won't end with .L/.R, so we skip this check
+                # or find another way to identify the side if needed. 
+                # Actually, the logic below works as long as control_name is in chains.
+                pass
+            
             base_bone = bones.get(chain[0])
             next_bone = bones.get(chain[1]) if len(chain) > 1 else None
             if not base_bone:
@@ -358,32 +413,33 @@ def _finger_controller_positions(bones, mapping, unit):
     return positions
 
 
-def _detect_finger_chains(bones):
+def _detect_finger_chains(bones, bone_names):
     by_norm = {_norm_name(bone.name): bone.name for bone in bones}
     chains = {}
 
     for side in ("L", "R"):
-        side_word = "left" if side == "L" else "right"
-        side_short = "l" if side == "L" else "r"
         for display_name, finger_name in FINGER_SPECS:
             chain = []
             for index, segment_name in enumerate(("proximal", "intermediate", "distal"), start=1):
                 aliases = (
-                    f"{side_word}{finger_name}{segment_name}",
-                    f"{side_word}{finger_name}{index}",
-                    f"{side_short}{finger_name}{segment_name}",
-                    f"{side_short}{finger_name}{index}",
-                    f"j_bip_{side_short}_{finger_name}{index}",
-                    f"j_bip_{side_short}_{finger_name}_{index}",
-                    f"j_bip_{side_short}_{finger_name}{segment_name}",
-                    f"{finger_name}{index}.{side_short}",
-                    f"{finger_name}{segment_name}.{side_short}",
+                    f"left{finger_name}{segment_name}" if side == "L" else f"right{finger_name}{segment_name}",
+                    f"left{finger_name}{index}" if side == "L" else f"right{finger_name}{index}",
+                    f"l{finger_name}{segment_name}" if side == "L" else f"r{finger_name}{segment_name}",
+                    f"l{finger_name}{index}" if side == "L" else f"r{finger_name}{index}",
+                    f"j_bip_{side.lower()}_{finger_name}{index}",
+                    f"j_bip_{side.lower()}_{finger_name}_{index}",
+                    f"j_bip_{side.lower()}_{finger_name}{segment_name}",
+                    f"{finger_name}{index}.{side.lower()}",
+                    f"{finger_name}{segment_name}.{side.lower()}",
                 )
                 found = _find_normalized_bone(by_norm, aliases)
                 if found:
                     chain.append(found)
             if chain:
-                chains[f"{display_name}_Curl.{side}"] = chain
+                # Map logical finger bone to actual bone name
+                logical_name = f"{P_CTRL}{display_name}_Curl.{side}"
+                actual_name = bone_names[logical_name]
+                chains[actual_name] = chain
 
     return chains
 
@@ -421,18 +477,20 @@ def _average_eye_forward(bones, mapping):
     return forward.normalized()
 
 
-def _assign_collections(armature_object):
+def _assign_collections(armature_object, bone_names):
     data = armature_object.data
     controls = _ensure_bone_collection(data, CONTROL_COLLECTION)
     helpers = _ensure_bone_collection(data, HELPER_COLLECTION)
 
-    for name in CONTROL_BONES:
-        bone = data.bones.get(name)
+    for logical_name in CONTROL_BONES:
+        actual_name = bone_names[logical_name]
+        bone = data.bones.get(actual_name)
         if bone:
             controls.assign(bone)
 
-    for name in HELPER_BONES:
-        bone = data.bones.get(name)
+    for logical_name in HELPER_BONES:
+        actual_name = bone_names[logical_name]
+        bone = data.bones.get(actual_name)
         if bone:
             helpers.assign(bone)
 
@@ -545,41 +603,41 @@ def _clear_hidden_extra_tag(bone):
         pass
 
 
-def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
+def _configure_pose_bones(armature_object, shapes, scale, hide_helpers, bone_names):
     for pose_bone in armature_object.pose.bones:
-        if pose_bone.name in GENERATED_BONES:
-            tag_generated(pose_bone)
+        if is_generated(pose_bone):
             pose_bone.lock_scale = (True, True, True)
             _set_custom_shape_scale(pose_bone, scale)
 
-    for name in CONTROL_BONES:
-        pose_bone = armature_object.pose.bones.get(name)
+    for logical_name in CONTROL_BONES:
+        actual_name = bone_names[logical_name]
+        pose_bone = armature_object.pose.bones.get(actual_name)
         if pose_bone:
-            if name == "Root_CTRL":
+            if logical_name == B_ROOT:
                 pose_bone.custom_shape = shapes["root"]
                 pose_bone.lock_location = (False, False, False)
                 _set_custom_shape_scale(pose_bone, scale)
                 _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 0.0)
-            elif name == "Hips_IK":
+            elif logical_name == B_HIPS:
                 pose_bone.custom_shape = shapes["box"]
                 _set_custom_shape_scale(pose_bone, scale)
-            elif name == "Eyes_CTRL":
+            elif logical_name == B_EYES:
                 pose_bone.custom_shape = shapes["eye"]
                 _set_custom_shape_scale(pose_bone, scale * 1.8)
-            elif name == "Hand_IK.L":
+            elif logical_name == B_HAND_IK_L:
                 pose_bone.custom_shape = shapes["hand"]
                 _set_custom_shape_scale(pose_bone, scale * 0.9)
                 _set_custom_shape_rotation(pose_bone, -90.0, 0.0, 90.0)
-            elif name == "Hand_IK.R":
+            elif logical_name == B_HAND_IK_R:
                 pose_bone.custom_shape = shapes["hand"]
                 _set_custom_shape_scale(pose_bone, scale * 0.9)
                 _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 90.0)
-            elif name.startswith("Foot_IK"):
+            elif logical_name in (B_FOOT_IK_L, B_FOOT_IK_R):
                 pose_bone.custom_shape = shapes["foot"]
                 _set_custom_shape_scale(pose_bone, scale * 2.0)
                 _set_custom_shape_translation(pose_bone, 0.0, 0.018 * scale, 0.072 * scale)
                 _set_custom_shape_rotation(pose_bone, 0.0, 0.0, 90.0)
-            elif name in FINGER_CONTROLS:
+            elif logical_name in FINGER_CONTROLS:
                 pose_bone.custom_shape = shapes["finger"]
                 pose_bone.lock_rotation = (True, True, True)
                 pose_bone.lock_scale = (True, True, False)
@@ -589,54 +647,58 @@ def _configure_pose_bones(armature_object, shapes, scale, hide_helpers):
                 pose_bone.custom_shape = shapes["hand"]
             _set_color(pose_bone, "THEME09")
 
-    for name in HELPER_BONES:
-        pose_bone = armature_object.pose.bones.get(name)
+    for logical_name in HELPER_BONES:
+        actual_name = bone_names[logical_name]
+        pose_bone = armature_object.pose.bones.get(actual_name)
         if pose_bone:
-            pose_bone.custom_shape = shapes["eye"] if name.startswith("Eye_Target") else shapes["pole"]
-            if name.startswith("Eye_Target"):
+            is_eye = logical_name in (B_EYE_TARGET_L, B_EYE_TARGET_R)
+            pose_bone.custom_shape = shapes["eye"] if is_eye else shapes["pole"]
+            if is_eye:
                 _set_custom_shape_scale(pose_bone, scale * 1.25)
-            _set_color(pose_bone, "THEME11" if name.startswith("Eye_Target") else "THEME04")
-            pose_bone.bone.hide = hide_helpers and not name.startswith("Eye_Target")
+            _set_color(pose_bone, "THEME11" if is_eye else "THEME04")
+            pose_bone.bone.hide = hide_helpers and not is_eye
 
 
-def _align_controls_to_current_pose(context, armature_object, mapping, scale):
+def _align_controls_to_current_pose(context, armature_object, mapping, scale, bone_names):
     """Initialize generated controls from the current pose before constraints run."""
 
     log_line(context, "Aligning generated controls to current source pose before adding constraints.")
     context.view_layer.update()
 
-    root = armature_object.pose.bones.get("Root_CTRL")
+    root = armature_object.pose.bones.get(bone_names[B_ROOT])
     source_root = _source_root_bone(armature_object.data.bones, mapping)
     source_root_pose = armature_object.pose.bones.get(source_root.name) if source_root else None
     if root and source_root_pose:
         root.matrix = source_root_pose.matrix.copy()
-        log_line(context, f"  Root_CTRL aligned to {source_root_pose.name} pose matrix.")
+        log_line(context, f"  {bone_names[B_ROOT]} aligned to {source_root_pose.name} pose matrix.")
     elif root:
-        log_line(context, "  Root_CTRL kept at generated floor/root placement.")
+        log_line(context, f"  {bone_names[B_ROOT]} kept at generated floor/root placement.")
 
-    for target_name, source_key in (
-        ("Hips_IK", "hips"),
-        ("Hand_IK.L", "hand.L"),
-        ("Hand_IK.R", "hand.R"),
-        ("Foot_IK.L", "foot.L"),
-        ("Foot_IK.R", "foot.R"),
+    for logical_name, source_key in (
+        (B_HIPS, "hips"),
+        (B_HAND_IK_L, "hand.L"),
+        (B_HAND_IK_R, "hand.R"),
+        (B_FOOT_IK_L, "foot.L"),
+        (B_FOOT_IK_R, "foot.R"),
     ):
-        target = armature_object.pose.bones.get(target_name)
+        actual_name = bone_names[logical_name]
+        target = armature_object.pose.bones.get(actual_name)
         source = armature_object.pose.bones.get(mapping[source_key])
         if target and source:
             _set_pose_from_source(target, source, source.head)
-            log_line(context, f"  {target_name} aligned to {source.name} pose head and rotation.")
+            log_line(context, f"  {actual_name} aligned to {source.name} pose head and rotation.")
 
     context.view_layer.update()
     unit = _pose_unit(armature_object, mapping, scale)
-    _align_finger_controls_to_current_pose(context, armature_object, unit)
+    _align_finger_controls_to_current_pose(context, armature_object, unit, bone_names)
 
-    eyes = armature_object.pose.bones.get("Eyes_CTRL")
+    eyes = armature_object.pose.bones.get(bone_names[B_EYES])
     if eyes:
         target_positions = []
         target_updates = []
-        for target_name, source_key in (("Eye_Target.L", "eye.L"), ("Eye_Target.R", "eye.R")):
-            target = armature_object.pose.bones.get(target_name)
+        for logical_name, source_key in ((B_EYE_TARGET_L, "eye.L"), (B_EYE_TARGET_R, "eye.R")):
+            actual_name = bone_names[logical_name]
+            target = armature_object.pose.bones.get(actual_name)
             source = armature_object.pose.bones.get(mapping.get(source_key, ""))
             if target and source:
                 direction = source.tail - source.head
@@ -648,17 +710,17 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
         if target_positions:
             average = sum(target_positions, Vector((0, 0, 0))) / len(target_positions)
             _set_pose_head_location(eyes, average)
-            log_line(context, "  Eyes_CTRL aligned to the average eye target position.")
+            log_line(context, f"  {bone_names[B_EYES]} aligned to the average eye target position.")
             context.view_layer.update()
         for target, target_location, source_name in target_updates:
             _set_pose_head_location(target, target_location)
             log_line(context, f"  {target.name} aligned in front of {source_name}.")
 
     for target_name, keys in (
-        ("Elbow_Pole.L", ("upper_arm.L", "lower_arm.L", "hand.L")),
-        ("Elbow_Pole.R", ("upper_arm.R", "lower_arm.R", "hand.R")),
-        ("Knee_Pole.L", ("upper_leg.L", "lower_leg.L", "foot.L")),
-        ("Knee_Pole.R", ("upper_leg.R", "lower_leg.R", "foot.R")),
+        (B_ELBOW_POLE_L, ("upper_arm.L", "lower_arm.L", "hand.L")),
+        (B_ELBOW_POLE_R, ("upper_arm.R", "lower_arm.R", "hand.R")),
+        (B_KNEE_POLE_L, ("upper_leg.L", "lower_leg.L", "foot.L")),
+        (B_KNEE_POLE_R, ("upper_leg.R", "lower_leg.R", "foot.R")),
     ):
         target = armature_object.pose.bones.get(target_name)
         root = armature_object.pose.bones.get(mapping[keys[0]])
@@ -677,10 +739,10 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
                 # singularity and can't determine the bend direction.  Nudge
                 # the IK target slightly toward the pole to prime the solver.
                 ik_target_name = {
-                    "Elbow_Pole.L": "Hand_IK.L",
-                    "Elbow_Pole.R": "Hand_IK.R",
-                    "Knee_Pole.L": "Foot_IK.L",
-                    "Knee_Pole.R": "Foot_IK.R",
+                    B_ELBOW_POLE_L: B_HAND_IK_L,
+                    B_ELBOW_POLE_R: B_HAND_IK_R,
+                    B_KNEE_POLE_L: B_FOOT_IK_L,
+                    B_KNEE_POLE_R: B_FOOT_IK_R,
                 }.get(target_name)
                 ik_target = armature_object.pose.bones.get(ik_target_name)
                 if ik_target:
@@ -697,8 +759,8 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale):
     context.view_layer.update()
 
 
-def _align_finger_controls_to_current_pose(context, armature_object, unit):
-    chains = _detect_finger_chains(armature_object.data.bones)
+def _align_finger_controls_to_current_pose(context, armature_object, unit, bone_names):
+    chains = _detect_finger_chains(armature_object.data.bones, bone_names)
     for control_name, chain in chains.items():
         target = armature_object.pose.bones.get(control_name)
         base_bone = armature_object.pose.bones.get(chain[0])
@@ -778,15 +840,15 @@ def _set_color(pose_bone, palette):
         pass
 
 
-def _create_constraints(context, armature_object, mapping, before_matrices):
-    _add_root_constraint(armature_object, mapping["hips"], "Hips_IK")
+def _create_constraints(context, armature_object, mapping, before_matrices, bone_names):
+    _add_root_constraint(armature_object, mapping["hips"], bone_names[B_ROOT])
     context.view_layer.update()
     _add_ik_constraint(
         context,
         armature_object,
         mapping["lower_arm.L"],
-        "Hand_IK.L",
-        "Elbow_Pole.L",
+        bone_names[B_HAND_IK_L],
+        bone_names[B_ELBOW_POLE_L],
         (mapping["upper_arm.L"], mapping["lower_arm.L"], mapping["hand.L"]),
         before_matrices,
     )
@@ -794,23 +856,23 @@ def _create_constraints(context, armature_object, mapping, before_matrices):
         context,
         armature_object,
         mapping["lower_arm.R"],
-        "Hand_IK.R",
-        "Elbow_Pole.R",
+        bone_names[B_HAND_IK_R],
+        bone_names[B_ELBOW_POLE_R],
         (mapping["upper_arm.R"], mapping["lower_arm.R"], mapping["hand.R"]),
         before_matrices,
     )
-    _add_rotation_constraint(armature_object, mapping["hand.L"], "Hand_IK.L")
-    _add_rotation_constraint(armature_object, mapping["hand.R"], "Hand_IK.R")
-    _add_rotation_constraint(armature_object, mapping["foot.L"], "Foot_IK.L")
-    _add_rotation_constraint(armature_object, mapping["foot.R"], "Foot_IK.R")
-    _add_eye_constraints(context, armature_object, mapping)
-    _add_finger_drivers(context, armature_object)
+    _add_rotation_constraint(armature_object, mapping["hand.L"], bone_names[B_HAND_IK_L])
+    _add_rotation_constraint(armature_object, mapping["hand.R"], bone_names[B_HAND_IK_R])
+    _add_rotation_constraint(armature_object, mapping["foot.L"], bone_names[B_FOOT_IK_L])
+    _add_rotation_constraint(armature_object, mapping["foot.R"], bone_names[B_FOOT_IK_R])
+    _add_eye_constraints(context, armature_object, mapping, bone_names)
+    _add_finger_drivers(context, armature_object, bone_names)
     _add_ik_constraint(
         context,
         armature_object,
         mapping["lower_leg.L"],
-        "Foot_IK.L",
-        "Knee_Pole.L",
+        bone_names[B_FOOT_IK_L],
+        bone_names[B_KNEE_POLE_L],
         (mapping["upper_leg.L"], mapping["lower_leg.L"], mapping["foot.L"]),
         before_matrices,
     )
@@ -818,8 +880,8 @@ def _create_constraints(context, armature_object, mapping, before_matrices):
         context,
         armature_object,
         mapping["lower_leg.R"],
-        "Foot_IK.R",
-        "Knee_Pole.R",
+        bone_names[B_FOOT_IK_R],
+        bone_names[B_KNEE_POLE_R],
         (mapping["upper_leg.R"], mapping["lower_leg.R"], mapping["foot.R"]),
         before_matrices,
     )
@@ -917,12 +979,13 @@ def _add_rotation_constraint(armature_object, bone_name, target_bone):
     tag_generated(constraint)
 
 
-def _add_eye_constraints(context, armature_object, mapping):
+def _add_eye_constraints(context, armature_object, mapping, bone_names):
     added = 0
     for side in ("L", "R"):
         source_key = f"eye.{side}"
-        target_bone = f"Eye_Target.{side}"
-        if source_key not in mapping or target_bone not in armature_object.pose.bones:
+        logical_target = B_EYE_TARGET_L if side == "L" else B_EYE_TARGET_R
+        actual_target = bone_names[logical_target]
+        if source_key not in mapping or actual_target not in armature_object.pose.bones:
             continue
         pose_bone = armature_object.pose.bones.get(mapping[source_key])
         if not pose_bone:
@@ -930,7 +993,7 @@ def _add_eye_constraints(context, armature_object, mapping):
         constraint = pose_bone.constraints.new(type="DAMPED_TRACK")
         constraint.name = EYE_CONSTRAINT_NAME
         constraint.target = armature_object
-        constraint.subtarget = target_bone
+        constraint.subtarget = actual_target
         _set_eye_track_axis(constraint, pose_bone)
         tag_generated(constraint)
         added += 1
@@ -941,17 +1004,17 @@ def _add_eye_constraints(context, armature_object, mapping):
         log_line(context, "No eye bones detected; skipped eye tracking constraints.")
 
 
-def _add_finger_drivers(context, armature_object):
+def _add_finger_drivers(context, armature_object, bone_names):
     added = 0
-    chains = _detect_finger_chains(armature_object.data.bones)
-    for control_name, chain in chains.items():
-        if control_name not in armature_object.pose.bones:
+    chains = _detect_finger_chains(armature_object.data.bones, bone_names)
+    for actual_control_name, chain in chains.items():
+        if actual_control_name not in armature_object.pose.bones:
             continue
         for bone_name in chain:
             pose_bone = armature_object.pose.bones.get(bone_name)
             if not pose_bone:
                 continue
-            if _add_finger_curl_driver(armature_object, pose_bone, control_name):
+            if _add_finger_curl_driver(armature_object, pose_bone, actual_control_name):
                 added += 1
 
     if added:

@@ -149,25 +149,14 @@ def _add_finger_drivers(context, armature_object, bone_names):
         # Add rotation constraint to the proximal bone so the controller can orient the finger.
         proximal_bone = armature_object.pose.bones.get(chain[0])
         if proximal_bone:
-            # Rotation
+            # Rotation in POSE space to perfectly follow the controller's armature-space orientation.
             rot_const = proximal_bone.constraints.new(type="COPY_ROTATION")
             rot_const.name = ROTATION_CONSTRAINT_NAME
             rot_const.target = armature_object
             rot_const.subtarget = actual_control_name
-            rot_const.target_space = "LOCAL"
-            rot_const.owner_space = "LOCAL"
-            if hasattr(rot_const, "mix_mode"):
-                rot_const.mix_mode = "BEFORE_ORIGINAL"
+            rot_const.target_space = "POSE"
+            rot_const.owner_space = "POSE"
             tag_generated(rot_const)
-
-            # Location
-            loc_const = proximal_bone.constraints.new(type="COPY_LOCATION")
-            loc_const.name = ADDON_ID + "_finger_loc"
-            loc_const.target = armature_object
-            loc_const.subtarget = actual_control_name
-            loc_const.target_space = "LOCAL"
-            loc_const.owner_space = "LOCAL"
-            tag_generated(loc_const)
 
         for bone_name in chain:
             pose_bone = armature_object.pose.bones.get(bone_name)

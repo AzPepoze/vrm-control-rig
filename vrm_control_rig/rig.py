@@ -5,7 +5,7 @@ import re
 import uuid
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .constants import (
     ADDON_ID,
@@ -116,7 +116,7 @@ def generate_control_rig(context, armature_object, *, regenerate=False):
     generated = _create_controller_bones(context, armature_object, mapping, scale, bone_names)
     log_line(context, "Created generated bones: " + ", ".join(generated))
     _assign_collections(armature_object, bone_names)
-    _configure_source_bones(context, armature_object, mapping, settings)
+    _configure_source_bones(context, armature_object, mapping, settings, bone_names)
     _configure_pose_bones(armature_object, shapes, scale, settings.auto_hide_helpers, bone_names)
     _align_controls_to_current_pose(context, armature_object, mapping, scale, bone_names)
     _create_constraints(context, armature_object, mapping, before_matrices, bone_names)
@@ -261,10 +261,18 @@ def _controller_positions(armature_object, mapping, scale, bone_names):
         bone_names[B_HAND_IK_R]: _matching_or_vertical(right_hand, tail("hand.R"), unit),
         bone_names[B_FOOT_IK_L]: _marker(left_foot, unit),
         bone_names[B_FOOT_IK_R]: _marker(right_foot, unit),
-        bone_names[B_ELBOW_POLE_L]: _pole_placement(head("upper_arm.L"), head("lower_arm.L"), head("hand.L"), unit, scale),
-        bone_names[B_ELBOW_POLE_R]: _pole_placement(head("upper_arm.R"), head("lower_arm.R"), head("hand.R"), unit, scale),
-        bone_names[B_KNEE_POLE_L]: _pole_placement(head("upper_leg.L"), head("lower_leg.L"), head("foot.L"), unit, scale),
-        bone_names[B_KNEE_POLE_R]: _pole_placement(head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale),
+        bone_names[B_ELBOW_POLE_L]: _pole_placement(
+            head("upper_arm.L"), head("lower_arm.L"), head("hand.L"), unit, scale, fallback_bias=Vector((0, 1, 0))
+        ),
+        bone_names[B_ELBOW_POLE_R]: _pole_placement(
+            head("upper_arm.R"), head("lower_arm.R"), head("hand.R"), unit, scale, fallback_bias=Vector((0, 1, 0))
+        ),
+        bone_names[B_KNEE_POLE_L]: _pole_placement(
+            head("upper_leg.L"), head("lower_leg.L"), head("foot.L"), unit, scale, fallback_bias=Vector((0, -1, 0))
+        ),
+        bone_names[B_KNEE_POLE_R]: _pole_placement(
+            head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale, fallback_bias=Vector((0, -1, 0))
+        ),
     }
 
     eye_positions = _eye_controller_positions(bones, mapping, unit, bone_names)
@@ -317,12 +325,12 @@ def _matching_or_vertical(head, tail, fallback_length):
     return _vertical(head, fallback_length)
 
 
-def _pole_placement(root, mid, tip, unit, scale):
-    pole, _bend_dir, _is_straight = _pole_position(root, mid, tip, unit * 3.0 * scale)
+def _pole_placement(root, mid, tip, unit, scale, fallback_bias=None):
+    pole, _bend_dir, _is_straight = _pole_position(root, mid, tip, unit * 3.0 * scale, fallback_bias)
     return _marker(pole, unit * 0.75)
 
 
-def _pole_position(root, mid, tip, distance):
+def _pole_position(root, mid, tip, distance, fallback_bias=None):
     """Return (pole_world_pos, bend_direction, is_straight).
 
     *bend_direction* is the unit vector from the chain toward the pole.
@@ -331,8 +339,8 @@ def _pole_position(root, mid, tip, distance):
     """
     chain = tip - root
     if chain.length < 0.0001:
-        bend = Vector((0, -1, 0))
-        return mid + bend * distance, bend.normalized(), True
+        bend = fallback_bias if fallback_bias else Vector((0, -1, 0))
+        return mid + bend.normalized() * distance, bend.normalized(), True
 
     chain_dir = chain.normalized()
     projection = root + chain_dir * (mid - root).dot(chain_dir)
@@ -342,9 +350,15 @@ def _pole_position(root, mid, tip, distance):
     if bend.length < 0.0001:
         is_straight = True
         # Chain is straight — pick a perpendicular direction.
-        # Cross chain with world +Z (up) gives a horizontal pole offset.
-        # If the chain is vertical, cross with world +Y instead.
-        perp = chain_dir.cross(Vector((0, 0, 1)))
+        if fallback_bias:
+            # Use bias if provided, as long as it's not parallel to the chain.
+            perp = fallback_bias - chain_dir * fallback_bias.dot(chain_dir)
+            if perp.length < 0.0001:
+                # Bias was parallel, fallback to cross products.
+                perp = chain_dir.cross(Vector((0, 0, 1)))
+        else:
+            perp = chain_dir.cross(Vector((0, 0, 1)))
+
         if perp.length < 0.0001:
             perp = chain_dir.cross(Vector((0, 1, 0)))
         if perp.length < 0.0001:
@@ -502,7 +516,7 @@ def _ensure_bone_collection(armature_data, name):
     return collection
 
 
-def _configure_source_bones(context, armature_object, mapping, settings):
+def _configure_source_bones(context, armature_object, mapping, settings, bone_names):
     if getattr(settings, "source_bones_wireframe", False):
         try:
             armature_object.data.display_type = "WIRE"
@@ -513,13 +527,13 @@ def _configure_source_bones(context, armature_object, mapping, settings):
     _restore_extra_source_bones(armature_object)
     _restore_extra_objects()
     if getattr(settings, "remove_extra_source_bones", False):
-        _remove_extra_source_bones(context, armature_object, mapping)
+        _remove_extra_source_bones(context, armature_object, mapping, bone_names)
         _hide_extra_objects(context)
 
 
-def _remove_extra_source_bones(context, armature_object, mapping):
+def _remove_extra_source_bones(context, armature_object, mapping, bone_names):
     controlled_source_bones = set(mapping.values())
-    for chain in _detect_finger_chains(armature_object.data.bones).values():
+    for chain in _detect_finger_chains(armature_object.data.bones, bone_names).values():
         controlled_source_bones.update(chain)
 
     remove_names = [
@@ -716,35 +730,38 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale, bo
             _set_pose_head_location(target, target_location)
             log_line(context, f"  {target.name} aligned in front of {source_name}.")
 
-    for target_name, keys in (
+    for logical_name, keys in (
         (B_ELBOW_POLE_L, ("upper_arm.L", "lower_arm.L", "hand.L")),
         (B_ELBOW_POLE_R, ("upper_arm.R", "lower_arm.R", "hand.R")),
         (B_KNEE_POLE_L, ("upper_leg.L", "lower_leg.L", "foot.L")),
         (B_KNEE_POLE_R, ("upper_leg.R", "lower_leg.R", "foot.R")),
     ):
-        target = armature_object.pose.bones.get(target_name)
-        root = armature_object.pose.bones.get(mapping[keys[0]])
-        mid = armature_object.pose.bones.get(mapping[keys[1]])
-        tip = armature_object.pose.bones.get(mapping[keys[2]])
-        if target and root and mid and tip:
+        actual_name = bone_names[logical_name]
+        target = armature_object.pose.bones.get(actual_name)
+        root_bone = armature_object.pose.bones.get(mapping[keys[0]])
+        mid_bone = armature_object.pose.bones.get(mapping[keys[1]])
+        tip_bone = armature_object.pose.bones.get(mapping[keys[2]])
+        if target and root_bone and mid_bone and tip_bone:
             pole_distance = unit * 3.0 * scale
+            bias = Vector((0, 1, 0)) if logical_name in (B_ELBOW_POLE_L, B_ELBOW_POLE_R) else Vector((0, -1, 0))
             pole_position, bend_dir, is_straight = _pole_position(
-                root.head, mid.head, tip.head, pole_distance
+                root_bone.head, mid_bone.head, tip_bone.head, pole_distance, fallback_bias=bias
             )
             _set_pose_head_location(target, pole_position)
-            log_line(context, f"  {target_name} aligned to current bend plane.")
+            log_line(context, f"  {actual_name} aligned to current bend plane.")
 
             if is_straight:
                 # The chain is perfectly straight — the IK solver hits a
                 # singularity and can't determine the bend direction.  Nudge
                 # the IK target slightly toward the pole to prime the solver.
-                ik_target_name = {
+                logical_ik_target = {
                     B_ELBOW_POLE_L: B_HAND_IK_L,
                     B_ELBOW_POLE_R: B_HAND_IK_R,
                     B_KNEE_POLE_L: B_FOOT_IK_L,
                     B_KNEE_POLE_R: B_FOOT_IK_R,
-                }.get(target_name)
-                ik_target = armature_object.pose.bones.get(ik_target_name)
+                }.get(logical_name)
+                actual_ik_target = bone_names[logical_ik_target]
+                ik_target = armature_object.pose.bones.get(actual_ik_target)
                 if ik_target:
                     nudge = bend_dir * (pole_distance * 0.002)
                     matrix = ik_target.matrix.copy()
@@ -752,9 +769,22 @@ def _align_controls_to_current_pose(context, armature_object, mapping, scale, bo
                     ik_target.matrix = matrix
                     log_line(
                         context,
-                        f"  {ik_target_name} nudged {nudge.length:.4f} toward "
+                        f"  {actual_ik_target} nudged {nudge.length:.4f} toward "
                         f"pole to break straight-chain singularity.",
                     )
+
+                # Also apply a tiny visual bend (0.2 degrees) to the source bones 
+                # in pose mode to help the IK solver find its way.
+                chain_vec = tip_bone.head - root_bone.head
+                if chain_vec.length > 0.0001:
+                    chain_dir = chain_vec.normalized()
+                    axis = chain_dir.cross(bend_dir).normalized()
+                    if axis.length > 0.5:
+                        # Rotate AWAY from the pole to bias the hinge (elbow/knee) TOWARDS the pole.
+                        local_axis = mid_bone.matrix.to_3x3().inverted() @ axis
+                        rot_matrix = Matrix.Rotation(math.radians(-0.2), 4, local_axis)
+                        mid_bone.matrix = mid_bone.matrix @ rot_matrix
+                        log_line(context, f"  {mid_bone.name} pre-bent 0.2 deg for IK bias.")
 
     context.view_layer.update()
 

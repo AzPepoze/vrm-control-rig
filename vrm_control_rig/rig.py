@@ -113,7 +113,7 @@ def generate_control_rig(context, armature_object, *, regenerate=False):
     scale = settings.controller_scale
     bone_names = _get_bone_names(settings)
 
-    generated = _create_controller_bones(context, armature_object, mapping, scale, bone_names)
+    generated = _create_controller_bones(context, armature_object, mapping, scale, bone_names, settings)
     log_line(context, "Created generated bones: " + ", ".join(generated))
     _assign_collections(armature_object, bone_names)
     _configure_source_bones(context, armature_object, mapping, settings, bone_names)
@@ -166,7 +166,7 @@ def has_control_rig(armature_object):
     return bool(get_generated_bone_names(armature_object))
 
 
-def _create_controller_bones(context, armature_object, mapping, scale, bone_names):
+def _create_controller_bones(context, armature_object, mapping, scale, bone_names, settings):
     positions = _controller_positions(armature_object, mapping, scale, bone_names)
     created = []
 
@@ -185,6 +185,31 @@ def _create_controller_bones(context, armature_object, mapping, scale, bone_name
             created.append(name)
 
         root = edit_bones.get(bone_names[B_ROOT])
+        
+        # Determine which bones should be parented to the root.
+        root_children = [
+            bone_names[B_HIPS],
+            bone_names[B_EYES],
+            bone_names[B_ELBOW_POLE_L],
+            bone_names[B_ELBOW_POLE_R],
+            bone_names[B_KNEE_POLE_L],
+            bone_names[B_KNEE_POLE_R],
+        ]
+        
+        if settings.parent_limbs_to_root:
+            root_children.extend([
+                bone_names[B_HAND_IK_L],
+                bone_names[B_HAND_IK_R],
+                bone_names[B_FOOT_IK_L],
+                bone_names[B_FOOT_IK_R],
+            ])
+
+        for name in root_children:
+            child = edit_bones.get(name)
+            if child and root:
+                child.parent = root
+                child.use_connect = False
+
         hand_parents = {
             bone_names[B_THUMB_CURL_L]: bone_names[B_HAND_IK_L],
             bone_names[B_INDEX_CURL_L]: bone_names[B_HAND_IK_L],
@@ -197,22 +222,6 @@ def _create_controller_bones(context, armature_object, mapping, scale, bone_name
             bone_names[B_RING_CURL_R]: bone_names[B_HAND_IK_R],
             bone_names[B_LITTLE_CURL_R]: bone_names[B_HAND_IK_R],
         }
-        for name in (
-            bone_names[B_HIPS],
-            bone_names[B_EYES],
-            bone_names[B_HAND_IK_L],
-            bone_names[B_HAND_IK_R],
-            bone_names[B_FOOT_IK_L],
-            bone_names[B_FOOT_IK_R],
-            bone_names[B_ELBOW_POLE_L],
-            bone_names[B_ELBOW_POLE_R],
-            bone_names[B_KNEE_POLE_L],
-            bone_names[B_KNEE_POLE_R],
-        ):
-            child = edit_bones.get(name)
-            if child and root:
-                child.parent = root
-                child.use_connect = False
 
         eyes_parent = edit_bones.get(bone_names[B_EYES])
         for name in (bone_names[B_EYE_TARGET_L], bone_names[B_EYE_TARGET_R]):

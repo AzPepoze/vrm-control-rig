@@ -167,7 +167,8 @@ def configure_pose_bones(armature_object, shapes, scale, hide_helpers, bone_name
                 _set_custom_shape_rotation(pose_bone, 0.0, 0.0, 90.0)
             elif logical_name in FINGER_CONTROLS:
                 pose_bone.custom_shape = shapes["finger"]
-                pose_bone.lock_rotation = (True, True, True)
+                pose_bone.lock_location = (False, False, False)
+                pose_bone.lock_rotation = (False, False, False)
                 pose_bone.lock_scale = (True, True, False)
                 _set_custom_shape_scale(pose_bone, scale * 0.55)
                 _set_custom_shape_rotation(pose_bone, 0.0, 0.0, 90.0)

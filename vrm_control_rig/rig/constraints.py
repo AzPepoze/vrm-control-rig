@@ -2,6 +2,7 @@
 
 import bpy
 from ..constants import (
+    ADDON_ID,
     IK_CONSTRAINT_NAME,
     ROOT_CONSTRAINT_NAME,
     ROTATION_CONSTRAINT_NAME,
@@ -144,6 +145,30 @@ def _add_finger_drivers(context, armature_object, bone_names):
     for actual_control_name, chain in chains.items():
         if actual_control_name not in armature_object.pose.bones:
             continue
+        
+        # Add rotation constraint to the proximal bone so the controller can orient the finger.
+        proximal_bone = armature_object.pose.bones.get(chain[0])
+        if proximal_bone:
+            # Rotation
+            rot_const = proximal_bone.constraints.new(type="COPY_ROTATION")
+            rot_const.name = ROTATION_CONSTRAINT_NAME
+            rot_const.target = armature_object
+            rot_const.subtarget = actual_control_name
+            rot_const.target_space = "LOCAL"
+            rot_const.owner_space = "LOCAL"
+            if hasattr(rot_const, "mix_mode"):
+                rot_const.mix_mode = "BEFORE_ORIGINAL"
+            tag_generated(rot_const)
+
+            # Location
+            loc_const = proximal_bone.constraints.new(type="COPY_LOCATION")
+            loc_const.name = ADDON_ID + "_finger_loc"
+            loc_const.target = armature_object
+            loc_const.subtarget = actual_control_name
+            loc_const.target_space = "LOCAL"
+            loc_const.owner_space = "LOCAL"
+            tag_generated(loc_const)
+
         for bone_name in chain:
             pose_bone = armature_object.pose.bones.get(bone_name)
             if not pose_bone:
@@ -152,7 +177,7 @@ def _add_finger_drivers(context, armature_object, bone_names):
                 added += 1
 
     if added:
-        log_line(context, f"Added {added} finger curl scale drivers.")
+        log_line(context, f"Added {added} finger curl scale drivers and orientation constraints.")
     else:
         log_line(context, "No finger chains detected; skipped finger curl drivers.")
 

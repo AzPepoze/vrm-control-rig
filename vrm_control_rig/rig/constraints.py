@@ -25,7 +25,7 @@ from .fingers import detect_finger_chains, add_finger_curl_driver
 
 def create_constraints(context, armature_object, mapping, before_matrices, bone_names):
     """Create all rig constraints in POSE mode."""
-    _add_root_constraint(armature_object, mapping["hips"], bone_names[B_ROOT])
+    _add_root_constraint(armature_object, mapping["hips"], bone_names[B_HIPS])
     context.view_layer.update()
     
     _add_ik_constraint(

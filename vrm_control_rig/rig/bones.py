@@ -148,7 +148,7 @@ def configure_pose_bones(armature_object, shapes, scale, hide_helpers, bone_name
                 _set_custom_shape_rotation(pose_bone, 90.0, 0.0, 0.0)
             elif logical_name == B_HIPS:
                 pose_bone.custom_shape = shapes["box"]
-                _set_custom_shape_scale(pose_bone, scale)
+                _set_custom_shape_scale(pose_bone, scale * 4.0)
             elif logical_name == B_EYES:
                 pose_bone.custom_shape = shapes["eye"]
                 _set_custom_shape_scale(pose_bone, scale * 1.8)

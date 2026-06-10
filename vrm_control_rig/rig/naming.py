@@ -1,6 +1,5 @@
-"""Bone naming and randomization logic."""
+"""Bone naming and obfuscation logic."""
 
-import uuid
 from ..constants import GENERATED_BONES
 
 def get_bone_names(settings):
@@ -8,8 +7,10 @@ def get_bone_names(settings):
     mapping = {}
     for name in GENERATED_BONES:
         if settings.use_random_names:
-            # Use a prefix that Godot is highly unlikely to map to humanoid.
-            mapping[name] = f"vcr_{uuid.uuid4().hex[:8]}"
+            # Join characters with hyphens to prevent auto-mapping by external tools.
+            # Example: 'Hand.L' -> 'h-a-n-d-l'
+            clean = "".join(c for c in name.lower() if c.isalnum())
+            mapping[name] = "-".join(list(clean))
         else:
             mapping[name] = name
     return mapping

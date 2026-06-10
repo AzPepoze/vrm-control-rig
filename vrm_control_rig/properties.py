@@ -61,8 +61,8 @@ class VRMControlRigSettings(bpy.types.PropertyGroup):
         default=False,
     )
     use_random_names: bpy.props.BoolProperty(
-        name="Random Bone Names",
-        description="Use randomized names for generated bones to prevent external tools (like Godot) from auto-mapping them to humanoid slots",
+        name="Obfuscated Bone Names",
+        description="Join bone name characters with hyphens to prevent external tools (like Godot) from auto-mapping them to humanoid slots",
         default=False,
     )
 

@@ -65,11 +65,6 @@ class VRMControlRigSettings(bpy.types.PropertyGroup):
         description="Use randomized names for generated bones to prevent external tools (like Godot) from auto-mapping them to humanoid slots",
         default=False,
     )
-    parent_limbs_to_root: bpy.props.BoolProperty(
-        name="Parent Limbs to Root",
-        description="Parent hand and foot IK controllers to the Root_CTRL bone. If disabled, they will move independently of the character root",
-        default=True,
-    )
 
 
 CLASSES = (VRMControlRigSettings,)

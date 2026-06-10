@@ -7,6 +7,8 @@ from ..constants import (
     ROOT_CONSTRAINT_NAME,
     ROTATION_CONSTRAINT_NAME,
     EYE_CONSTRAINT_NAME,
+    FOLLOW_ROOT_CONSTRAINT_NAME,
+    FOLLOW_ROOT_PROPERTY,
     B_ROOT,
     B_HIPS,
     B_EYE_TARGET_L,
@@ -15,6 +17,10 @@ from ..constants import (
     B_HAND_IK_R,
     B_FOOT_IK_L,
     B_FOOT_IK_R,
+    B_HAND_IK_MCH_ROOT_L,
+    B_HAND_IK_MCH_ROOT_R,
+    B_FOOT_IK_MCH_ROOT_L,
+    B_FOOT_IK_MCH_ROOT_R,
     B_ELBOW_POLE_L,
     B_ELBOW_POLE_R,
     B_KNEE_POLE_L,
@@ -51,7 +57,9 @@ def create_constraints(context, armature_object, mapping, before_matrices, bone_
     _add_rotation_constraint(armature_object, mapping["hand.R"], bone_names[B_HAND_IK_R])
     _add_rotation_constraint(armature_object, mapping["foot.L"], bone_names[B_FOOT_IK_L])
     _add_rotation_constraint(armature_object, mapping["foot.R"], bone_names[B_FOOT_IK_R])
-    
+
+    _add_ik_follow_root_constraints(armature_object, bone_names)
+
     _add_eye_constraints(context, armature_object, mapping, bone_names)
     _add_finger_drivers(context, armature_object, bone_names)
     
@@ -114,6 +122,51 @@ def _add_rotation_constraint(armature_object, bone_name, target_bone):
     constraint.target_space = "POSE"
     constraint.owner_space = "POSE"
     tag_generated(constraint)
+
+def _add_ik_follow_root_constraints(armature_object, bone_names):
+    ik_bones = [
+        (B_HAND_IK_L, B_HAND_IK_MCH_ROOT_L),
+        (B_HAND_IK_R, B_HAND_IK_MCH_ROOT_R),
+        (B_FOOT_IK_L, B_FOOT_IK_MCH_ROOT_L),
+        (B_FOOT_IK_R, B_FOOT_IK_MCH_ROOT_R),
+    ]
+    
+    for logical_name, mch_logical_name in ik_bones:
+        actual_name = bone_names[logical_name]
+        mch_name = bone_names[mch_logical_name]
+        
+        pose_bone = armature_object.pose.bones.get(actual_name)
+        mch_bone = armature_object.pose.bones.get(mch_name)
+        
+        if not pose_bone or not mch_bone:
+            continue
+
+        # Add custom property
+        pose_bone[FOLLOW_ROOT_PROPERTY] = 1.0
+        pose_bone.id_properties_ui(FOLLOW_ROOT_PROPERTY).update(
+            min=0.0, max=1.0, soft_min=0.0, soft_max=1.0, description="Stick to Root Controller"
+        )
+
+        # Add Copy Transforms constraint targeting the MCH bone (which follows the root)
+        constraint = pose_bone.constraints.new(type="COPY_TRANSFORMS")
+        constraint.name = FOLLOW_ROOT_CONSTRAINT_NAME
+        constraint.target = armature_object
+        constraint.subtarget = mch_name
+        constraint.target_space = "POSE"
+        constraint.owner_space = "POSE"
+        tag_generated(constraint)
+
+        # Add driver for influence based on follow_root property
+        fcurve = constraint.driver_add("influence")
+        driver = fcurve.driver
+        driver.type = "SUM"
+        var = driver.variables.new()
+        var.name = "follow"
+        var.type = "SINGLE_PROP"
+        target = var.targets[0]
+        target.id_type = "OBJECT"
+        target.id = armature_object
+        target.data_path = f'pose.bones["{actual_name}"]["{FOLLOW_ROOT_PROPERTY}"]'
 
 def _add_eye_constraints(context, armature_object, mapping, bone_names):
     added = 0

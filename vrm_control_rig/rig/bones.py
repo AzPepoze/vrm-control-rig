@@ -16,6 +16,10 @@ from ..constants import (
     B_HAND_IK_R,
     B_FOOT_IK_L,
     B_FOOT_IK_R,
+    B_HAND_IK_MCH_ROOT_L,
+    B_HAND_IK_MCH_ROOT_R,
+    B_FOOT_IK_MCH_ROOT_L,
+    B_FOOT_IK_MCH_ROOT_R,
     B_ELBOW_POLE_L,
     B_ELBOW_POLE_R,
     B_KNEE_POLE_L,
@@ -65,15 +69,11 @@ def create_controller_bones(context, armature_object, mapping, scale, bone_names
             bone_names[B_ELBOW_POLE_R],
             bone_names[B_KNEE_POLE_L],
             bone_names[B_KNEE_POLE_R],
+            bone_names[B_HAND_IK_MCH_ROOT_L],
+            bone_names[B_HAND_IK_MCH_ROOT_R],
+            bone_names[B_FOOT_IK_MCH_ROOT_L],
+            bone_names[B_FOOT_IK_MCH_ROOT_R],
         ]
-        
-        if settings.parent_limbs_to_root:
-            root_children.extend([
-                bone_names[B_HAND_IK_L],
-                bone_names[B_HAND_IK_R],
-                bone_names[B_FOOT_IK_L],
-                bone_names[B_FOOT_IK_R],
-            ])
 
         for name in root_children:
             child = edit_bones.get(name)
@@ -227,6 +227,10 @@ def _controller_positions(armature_object, mapping, scale, bone_names):
         bone_names[B_KNEE_POLE_R]: _pole_placement(
             head("upper_leg.R"), head("lower_leg.R"), head("foot.R"), unit, scale, fallback_bias=Vector((0, -1, 0))
         ),
+        bone_names[B_HAND_IK_MCH_ROOT_L]: matching_or_vertical(left_hand, tail("hand.L"), unit),
+        bone_names[B_HAND_IK_MCH_ROOT_R]: matching_or_vertical(right_hand, tail("hand.R"), unit),
+        bone_names[B_FOOT_IK_MCH_ROOT_L]: marker(left_foot, unit),
+        bone_names[B_FOOT_IK_MCH_ROOT_R]: marker(right_foot, unit),
     }
 
     from .alignment import _eye_controller_positions, _finger_controller_positions

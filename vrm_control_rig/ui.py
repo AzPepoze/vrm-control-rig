@@ -5,6 +5,7 @@ import bpy
 from .detection import detect_humanoid_bones
 from .rig import has_control_rig
 from .utils import active_armature
+from .constants import FOLLOW_ROOT_PROPERTY
 
 
 class VRMCONTROLRIG_PT_panel(bpy.types.Panel):
@@ -38,6 +39,13 @@ class VRMCONTROLRIG_PT_panel(bpy.types.Panel):
         else:
             status.label(text=f"Detected {len(mapping)} humanoid bones.", icon="CHECKMARK")
 
+        if armature.mode == "POSE" and context.active_pose_bone:
+            pb = context.active_pose_bone
+            if FOLLOW_ROOT_PROPERTY in pb.keys():
+                ik_box = layout.box()
+                ik_box.label(text=f"IK Settings: {pb.name}", icon="CONSTRAINT_BONE")
+                ik_box.prop(pb, f'["{FOLLOW_ROOT_PROPERTY}"]', text="Stick to Root", slider=True)
+
         layout.operator("vrm_control_rig.generate", icon="CON_ARMATURE")
 
         row = layout.row(align=True)
@@ -54,7 +62,6 @@ class VRMCONTROLRIG_PT_panel(bpy.types.Panel):
         options.prop(settings, "source_bones_wireframe")
         options.prop(settings, "remove_extra_source_bones")
         options.prop(settings, "use_random_names")
-        options.prop(settings, "parent_limbs_to_root")
         options.prop(settings, "enable_diagnostics")
         options.prop(settings, "clear_log_on_generate")
 

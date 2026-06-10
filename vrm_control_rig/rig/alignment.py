@@ -13,6 +13,10 @@ from ..constants import (
     B_HAND_IK_R,
     B_FOOT_IK_L,
     B_FOOT_IK_R,
+    B_HAND_IK_MCH_ROOT_L,
+    B_HAND_IK_MCH_ROOT_R,
+    B_FOOT_IK_MCH_ROOT_L,
+    B_FOOT_IK_MCH_ROOT_R,
     B_ELBOW_POLE_L,
     B_ELBOW_POLE_R,
     B_KNEE_POLE_L,
@@ -52,6 +56,25 @@ def align_controls_to_current_pose(context, armature_object, mapping, scale, bon
         if target and source:
             _set_pose_from_source(target, source, source.head)
             log_line(context, f"  {actual_name} aligned to {source.name} pose head and rotation.")
+            
+            # Sync the space-switching MCH bone immediately
+            mch_map = {
+                B_HAND_IK_L: B_HAND_IK_MCH_ROOT_L,
+                B_HAND_IK_R: B_HAND_IK_MCH_ROOT_R,
+                B_FOOT_IK_L: B_FOOT_IK_MCH_ROOT_L,
+                B_FOOT_IK_R: B_FOOT_IK_MCH_ROOT_R,
+            }
+            mch_logical = mch_map.get(logical_name)
+            if mch_logical:
+                mch_name = bone_names.get(mch_logical)
+                mch_pb = armature_object.pose.bones.get(mch_name) if mch_name else None
+                if mch_pb:
+                    # Update view layer to ensure target.matrix is fresh after parent/source alignment
+                    context.view_layer.update()
+                    mch_pb.matrix = target.matrix.copy()
+                    log_line(context, f"  {mch_name} (MCH) synced to {actual_name} pose.")
+                else:
+                    log_line(context, f"  Warning: Could not find MCH bone {mch_name} for {actual_name}")
 
     context.view_layer.update()
     unit = _pose_unit(armature_object, mapping, scale)

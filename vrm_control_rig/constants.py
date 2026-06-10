@@ -29,6 +29,12 @@ B_ELBOW_POLE_R = P_MCH + "Elbow_Pole.R"
 B_KNEE_POLE_L = P_MCH + "Knee_Pole.L"
 B_KNEE_POLE_R = P_MCH + "Knee_Pole.R"
 
+# MCH Space Switching Bones
+B_HAND_IK_MCH_ROOT_L = P_MCH + "Hand_IK_Root.L"
+B_HAND_IK_MCH_ROOT_R = P_MCH + "Hand_IK_Root.R"
+B_FOOT_IK_MCH_ROOT_L = P_MCH + "Foot_IK_Root.L"
+B_FOOT_IK_MCH_ROOT_R = P_MCH + "Foot_IK_Root.R"
+
 # Finger Controls
 B_THUMB_CURL_L = P_CTRL + "Thumb_Curl.L"
 B_INDEX_CURL_L = P_CTRL + "Index_Curl.L"
@@ -66,6 +72,10 @@ GENERATED_BONES = (
     B_ELBOW_POLE_R,
     B_KNEE_POLE_L,
     B_KNEE_POLE_R,
+    B_HAND_IK_MCH_ROOT_L,
+    B_HAND_IK_MCH_ROOT_R,
+    B_FOOT_IK_MCH_ROOT_L,
+    B_FOOT_IK_MCH_ROOT_R,
 )
 
 CONTROL_BONES = (
@@ -95,12 +105,18 @@ HELPER_BONES = (
     B_ELBOW_POLE_R,
     B_KNEE_POLE_L,
     B_KNEE_POLE_R,
+    B_HAND_IK_MCH_ROOT_L,
+    B_HAND_IK_MCH_ROOT_R,
+    B_FOOT_IK_MCH_ROOT_L,
+    B_FOOT_IK_MCH_ROOT_R,
 )
 
 IK_CONSTRAINT_NAME = "VRM Control Rig IK"
 ROOT_CONSTRAINT_NAME = "VRM Control Rig Root"
 ROTATION_CONSTRAINT_NAME = "VRM Control Rig Rotation"
 EYE_CONSTRAINT_NAME = "VRM Control Rig Eye Track"
+FOLLOW_ROOT_CONSTRAINT_NAME = "VRM Control Rig Follow Root"
+FOLLOW_ROOT_PROPERTY = "ik_follow_root"
 FINGER_CURL_CONSTRAINT_NAME = "VRM Control Rig Finger Curl"
 FINGER_CURL_DRIVER_GROUP = "VRM Control Rig Finger Curl"
 FINGER_CURL_DRIVER_TAG = "vcr_finger_curl"
